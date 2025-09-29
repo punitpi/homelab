@@ -1,0 +1,124 @@
+# Homelab Infrastructure .gitignore
+
+# === SECRETS & SENSITIVE DATA ===
+# Never commit actual secrets
+env/secrets.env
+env/local.env
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+
+# SSH Keys
+id_*
+*.pub
+known_hosts*
+
+# Backup files that might contain sensitive data
+*.sql.gz
+*.dump
+*.backup
+
+# === ENVIRONMENT & RUNTIME ===
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# === DOCKER & COMPOSE ===
+# Docker runtime files
+.docker/
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Container data volumes (if accidentally placed in repo)
+data/
+volumes/
+postgres-data/
+redis-data/
+
+# === ANSIBLE ===
+# Ansible runtime files
+*.retry
+.ansible/
+ansible.log
+
+# Host-specific generated files
+inventory/hosts.local
+inventory/*.backup
+
+# === TERRAFORM (if added later) ===
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars
+
+# === BACKUP & TEMPORARY FILES ===
+# Restic repository files (if local)
+restic-repo/
+*.restic
+
+# Temporary restore directories
+/tmp/restic_restore_*
+restore-test-*
+
+# Log files
+*.log
+logs/
+
+# === DEVELOPMENT & TESTING ===
+# Test outputs
+test-results/
+coverage/
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# === LOCAL CUSTOMIZATIONS ===
+# Local override files (node-specific configs)
+local.*.yml
+local.*.yaml
+*.local.*
+
+# Personal notes and documentation
+NOTES.md
+TODO.md
+personal-*
+
+# === ARTIFACTS & BUILDS ===
+# Compiled binaries (if any custom tools are built)
+bin/
+build/
+dist/
+
+# === MONITORING & METRICS ===
+# Grafana data (if running locally)
+grafana-data/
+prometheus-data/
+
+# === CLOUD PROVIDER CONFIGS ===
+# Cloud credentials
+*-credentials.json
+service-account.json
+.aws/
+.azure/
+.gcp/
