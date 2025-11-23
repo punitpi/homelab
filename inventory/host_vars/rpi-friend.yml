@@ -1,0 +1,22 @@
+# Host-specific configuration for rpi-friend
+---
+# This is the failover/standby node
+apps_enabled: false # Disabled by default, enable during failover
+primary_node: false
+
+# Backup Configuration
+backup_enabled: true
+backup_schedule: '0 3 * * *' # 3 AM daily (offset from primary)
+
+# Resource Limits
+max_cpu_percent: 70
+max_memory_percent: 75
+
+# Services hosted on this node (standby mode)
+hosted_services:
+  - 'base-stack'
+  - 'backup-automation'
+
+# Node role in cluster
+node_role: 'standby'
+can_promote_to_primary: true

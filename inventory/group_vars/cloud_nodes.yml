@@ -1,0 +1,38 @@
+# Common variables for cloud nodes (VPS/Cloud VMs)
+---
+# System Configuration
+timezone: 'UTC'
+
+# Docker Configuration
+docker_users:
+  - '{{ ansible_user }}'
+
+# Homelab Paths
+homelab_base_path: '/opt/homelab'
+backup_path: '/opt/backups'
+compose_base_path: '{{ homelab_base_path }}/stacks'
+
+# Environment variable mappings (used by Ansible tasks)
+STACKS_PATH: '/opt/stacks'
+APPDATA_PATH: '/srv/appdata'
+BACKUP_PATH: '/opt/backups'
+DB_DUMP_PATH: '/tmp/db_dumps'
+
+# Cloud Node Settings
+apps_enabled: false
+backup_enabled: false
+cloud_proxy_enabled: true
+
+# Network Configuration
+tailscale_enabled: true
+firewall_enabled: true
+ssh_port: 22
+
+# Ansible Authentication - using vault variable from all.yml
+ansible_sudo_pass: '{{ vault_cloud_sudo_pass }}'
+
+# Monitoring
+log_retention_days: 30
+disk_cleanup_enabled: true
+# Reference vault variables
+# ansible_sudo_pass moved to specific playbooks that need sudo privileges

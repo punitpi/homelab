@@ -1,0 +1,57 @@
+---
+- name: Deploy Base Stack
+  hosts: rpi_nodes
+  become: true
+  tags: [base]
+  roles:
+    - role: common
+    - role: compose-deploy
+      vars:
+        stack_name: base
+
+- name: Deploy Application Stack
+  hosts: rpi_nodes
+  become: true
+  tags: [apps]
+  tasks:
+    - name: Check if APPS_ENABLED is true in local.env
+      ansible.builtin.shell: grep -q '^APPS_ENABLED=true' {{ STACKS_PATH }}/env/local.env
+      register: apps_enabled_check
+      failed_when: false
+      changed_when: false
+
+    - name: Deploy apps if enabled
+      include_role:
+        name: common
+      when: apps_enabled_check.rc == 0
+
+    - name: Deploy apps stack
+      include_role:
+        name: compose-deploy
+      vars:
+        stack_name: apps
+      when: apps_enabled_check.rc == 0
+
+- name: Deploy Cloud Stack
+  hosts: cloud_nodes
+  become: true
+  tags: [cloud]
+  roles:
+    - role: common
+    - role: compose-deploy
+      vars:
+        stack_name: cloud
+
+- name: Deploy Backup Automation
+  hosts: all
+  become: true
+  tags: [backup-automation]
+  roles:
+    - role: backup-automation
+
+- name: Deploy Rclone Mounts
+  hosts: rpi_nodes
+  become: true
+  tags: [rclone-mount]
+  roles:
+    - role: rclone-mount

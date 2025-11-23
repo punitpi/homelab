@@ -1,0 +1,114 @@
+---
+- name: Configure Network Priority - Ethernet over WiFi
+  hosts: rpi_nodes
+  become: yes
+  gather_facts: yes
+  vars:
+    ansible_sudo_pass: '{{ vault_rpi_sudo_pass }}'
+    wifi_password: '{{ vault_wifi_password }}'
+
+  vars_prompt:
+    - name: wifi_ssid
+      prompt: 'Enter your WiFi SSID'
+      private: no
+
+  handlers:
+    - name: apply netplan
+      shell: netplan apply
+      become: yes
+
+  tasks:
+    - name: Check current network interfaces
+      shell: ip addr show | grep -E "eth0|wlan0"
+      register: current_interfaces
+
+    - name: Display current network status
+      debug:
+        msg: '{{ current_interfaces.stdout_lines }}'
+
+    - name: Check current routing
+      shell: ip route show
+      register: current_routes
+
+    - name: Display current routing
+      debug:
+        msg: 'Current routes: {{ current_routes.stdout_lines }}'
+
+    - name: Find existing netplan files
+      find:
+        paths: /etc/netplan/
+        patterns: '*.yaml'
+      register: netplan_files
+
+    - name: Backup existing netplan files
+      copy:
+        src: '{{ item.path }}'
+        dest: '{{ item.path }}.backup.{{ ansible_date_time.epoch }}'
+        remote_src: yes
+      loop: '{{ netplan_files.files }}'
+
+    - name: Create network priority configuration
+      copy:
+        dest: /etc/netplan/01-network-priority.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              eth0:
+                dhcp4: true
+                dhcp4-overrides:
+                  route-metric: 100
+            wifis:
+              wlan0:
+                dhcp4: true
+                dhcp4-overrides:
+                  route-metric: 200
+                access-points:
+                  "{{ wifi_ssid }}":
+                    password: "{{ wifi_password }}"
+        mode: '0600'
+      notify: apply netplan
+
+    - name: Remove conflicting netplan files
+      file:
+        path: '{{ item.path }}'
+        state: absent
+      loop: '{{ netplan_files.files }}'
+      when:
+        - item.path != "/etc/netplan/01-network-priority.yaml"
+        - "'cloud-init' not in item.path"
+      notify: apply netplan
+
+    - name: Force handler execution
+      meta: flush_handlers
+
+    - name: Wait for network reconfiguration
+      pause:
+        seconds: 15
+
+    - name: Verify final network configuration
+      shell: |
+        echo "=== Network Interfaces ==="
+        ip addr show eth0 wlan0 2>/dev/null || true
+        echo "=== Routing Table ==="
+        ip route show
+        echo "=== Default Route ==="
+        ip route get 8.8.8.8
+      register: final_network_status
+
+    - name: Display final network status
+      debug:
+        msg: '{{ final_network_status.stdout_lines }}'
+
+    - name: Test internet connectivity
+      uri:
+        url: 'http://www.google.com'
+        method: HEAD
+        timeout: 10
+      register: connectivity_test
+      ignore_errors: yes
+
+    - name: Display connectivity test result
+      debug:
+        msg: "Internet connectivity: {{ 'SUCCESS' if connectivity_test.status == 200 else 'FAILED' }}"

@@ -1,0 +1,108 @@
+---
+- name: Create stack directory
+  ansible.builtin.file:
+    path: '{{ STACKS_PATH }}/{{ stack_name }}'
+    state: directory
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0755'
+
+- name: Copy compose file for {{ stack_name }}
+  ansible.builtin.template:
+    src: ../../../stacks/{{ stack_name }}/compose.yml
+    dest: '{{ STACKS_PATH }}/{{ stack_name }}/compose.yml'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0644'
+
+- name: Create merged .env file for {{ stack_name }} stack
+  ansible.builtin.shell: |
+    cat {{ STACKS_PATH }}/env/common.env > {{ STACKS_PATH }}/{{ stack_name }}/.env
+    if [ -f {{ STACKS_PATH }}/env/secrets.env ]; then
+      cat {{ STACKS_PATH }}/env/secrets.env >> {{ STACKS_PATH }}/{{ stack_name }}/.env
+    fi
+    if [ -f {{ STACKS_PATH }}/env/local.env ]; then
+      cat {{ STACKS_PATH }}/env/local.env >> {{ STACKS_PATH }}/{{ stack_name }}/.env
+    fi
+    chown {{ ansible_user }}:{{ ansible_user }} {{ STACKS_PATH }}/{{ stack_name }}/.env
+    chmod 0600 {{ STACKS_PATH }}/{{ stack_name }}/.env
+  args:
+    executable: /bin/bash
+  become: true
+
+- name: Remove existing Traefik directory if present (cleanup)
+  ansible.builtin.file:
+    path: '{{ STACKS_PATH }}/{{ stack_name }}/traefik'
+    state: absent
+  when: stack_name == 'cloud'
+
+- name: Create Traefik config directory for cloud stack
+  ansible.builtin.file:
+    path: '{{ STACKS_PATH }}/{{ stack_name }}/traefik/config'
+    state: directory
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0755'
+  when: stack_name == 'cloud'
+
+- name: Copy Traefik static config template for cloud stack
+  ansible.builtin.copy:
+    src: ../../../stacks/cloud/traefik/traefik.yml
+    dest: '{{ STACKS_PATH }}/cloud/traefik/traefik.yml.template'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0644'
+  when: stack_name == 'cloud'
+
+- name: Copy Traefik dynamic config template for cloud stack
+  ansible.builtin.copy:
+    src: ../../../stacks/cloud/traefik/config/dynamic.yml
+    dest: '{{ STACKS_PATH }}/cloud/traefik/config/dynamic.yml.template'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0644'
+  when: stack_name == 'cloud'
+
+- name: Process Traefik static config with envsubst
+  ansible.builtin.shell: |
+    set -e
+    # Source env file and extract just the vars we need to avoid syntax errors
+    DOMAIN=$(grep '^DOMAIN=' {{ STACKS_PATH }}/cloud/.env | cut -d'=' -f2-)
+    ACME_EMAIL=$(grep '^ACME_EMAIL=' {{ STACKS_PATH }}/cloud/.env | cut -d'=' -f2-)
+    export DOMAIN ACME_EMAIL
+    envsubst < {{ STACKS_PATH }}/cloud/traefik/traefik.yml.template > {{ STACKS_PATH }}/cloud/traefik/traefik.yml
+  args:
+    executable: /bin/bash
+  when: stack_name == 'cloud'
+
+- name: Process Traefik dynamic config with envsubst
+  ansible.builtin.shell: |
+    set -e
+    # Source env file and extract just the vars we need to avoid syntax errors
+    DOMAIN=$(grep '^DOMAIN=' {{ STACKS_PATH }}/cloud/.env | cut -d'=' -f2-)
+    RPI_HOME_IP=$(grep '^RPI_HOME_IP=' {{ STACKS_PATH }}/cloud/.env | cut -d'=' -f2-)
+    export DOMAIN RPI_HOME_IP
+    envsubst < {{ STACKS_PATH }}/cloud/traefik/config/dynamic.yml.template > {{ STACKS_PATH }}/cloud/traefik/config/dynamic.yml
+  args:
+    executable: /bin/bash
+  when: stack_name == 'cloud'
+
+- name: Deploy {{ stack_name }} stack from compose file
+  community.docker.docker_compose_v2:
+    project_src: '{{ STACKS_PATH }}/{{ stack_name }}'
+    files:
+      - compose.yml
+    state: present
+    pull: missing
+    remove_orphans: true
+    timeout: 1800
+  register: compose_output
+  environment:
+    APPS_ENABLED: "{{ APPS_ENABLED | default('false') }}"
+  async: 1800
+  poll: 10
+
+- name: Debug compose output
+  ansible.builtin.debug:
+    var: compose_output
+    verbosity: 1

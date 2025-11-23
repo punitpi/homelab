@@ -1,0 +1,66 @@
+---
+# Disable Tailscale DNS on all nodes to use public DNS instead
+# Run with: ansible-playbook -i inventory/hosts.ini ansible/playbooks/disable-tailscale-dns.yml --ask-vault-pass
+
+- name: Disable Tailscale DNS on All Nodes
+  hosts: rpi_nodes
+  become: true
+
+  tasks:
+    - name: Display current action
+      ansible.builtin.debug:
+        msg: "Disabling Tailscale DNS acceptance on {{ inventory_hostname }}"
+
+    - name: Check current Tailscale status
+      ansible.builtin.shell: |
+        tailscale status --json | jq -r '.Self.DNSName'
+      register: ts_status
+      changed_when: false
+
+    - name: Disable Tailscale DNS acceptance
+      ansible.builtin.shell: |
+        tailscale set --accept-dns=false
+      register: ts_dns_disabled
+
+    - name: Restart systemd-resolved to use fallback DNS
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+
+    - name: Wait for DNS to settle
+      ansible.builtin.pause:
+        seconds: 2
+
+    - name: Verify Tailscale is still connected
+      ansible.builtin.shell: |
+        tailscale status --json | jq -r '.BackendState'
+      register: ts_state
+      changed_when: false
+
+    - name: Test internet DNS
+      ansible.builtin.shell: |
+        nslookup google.com > /dev/null && echo " Working" || echo " Failed"
+      register: dns_test
+      changed_when: false
+
+    - name: Display result
+      ansible.builtin.debug:
+        msg: |
+           Tailscale DNS disabled on {{ inventory_hostname }}
+          Status: {{ ts_status.stdout }}
+          State: {{ ts_state.stdout }}
+          Internet DNS: {{ dns_test.stdout }}
+
+    - name: Display final summary
+      ansible.builtin.debug:
+        msg: |
+           Tailscale DNS disabled!
+
+          What this means:
+          - Tailscale VPN still works for connectivity
+          - DNS queries now use fallback DNS only (Quad9, Cloudflare)
+          - No Tailscale MagicDNS (hostnames like ub-house-green won't resolve)
+          - Docker containers will use public DNS
+
+          To re-enable Tailscale DNS:
+          ansible-playbook -i inventory/hosts.ini ansible/playbooks/enable-tailscale-dns.yml --ask-vault-pass

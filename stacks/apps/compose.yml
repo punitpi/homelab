@@ -1,0 +1,252 @@
+services:
+  mealie:
+    image: ghcr.io/mealie-recipes/mealie:latest
+    container_name: mealie
+    environment:
+      - TZ=${TZ}
+      - ALLOW_SIGNUP=true
+      - MAX_WORKERS=1
+      - WEB_CONCURRENCY=1
+    volumes:
+      - ${APPDATA_PATH}/mealie/data:/app/data
+    ports:
+      - "0.0.0.0:9925:9000"
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mealie.rule=Host(`mealie.${DOMAIN}`)"
+      - "traefik.http.routers.mealie.entrypoints=websecure"
+      - "traefik.http.routers.mealie.tls.certresolver=cloudflare"
+      - "traefik.http.services.mealie.loadbalancer.server.port=9000"
+
+  wallos:
+    image: bellamy/wallos:latest
+    container_name: wallos
+    environment:
+      - TZ=${TZ}
+    ports:
+      - "0.0.0.0:8282:80"
+    volumes:
+      - ${APPDATA_PATH}/wallos/db:/var/www/html/db
+      - ${APPDATA_PATH}/wallos/logos:/var/www/html/images/uploads/logos
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wallos.rule=Host(`wallos.${DOMAIN}`)"
+      - "traefik.http.routers.wallos.entrypoints=websecure"
+      - "traefik.http.routers.wallos.tls.certresolver=cloudflare"
+      - "traefik.http.services.wallos.loadbalancer.server.port=80"
+
+  sterling-pdf:
+    image: frooodle/s-pdf:latest
+    container_name: sterling-pdf
+    environment:
+      - TZ=${TZ}
+      - DOCKER_ENABLE_SECURITY=false
+      - SYSTEM_DEFAULTLOCALE=en-GB
+    ports:
+      - "0.0.0.0:8082:8080"
+    volumes:
+      - ${APPDATA_PATH}/sterling-pdf/tessdata:/usr/share/tesseract-ocr/5/tessdata
+      - ${APPDATA_PATH}/sterling-pdf/configs:/configs
+      - ${APPDATA_PATH}/sterling-pdf/customFiles:/customFiles
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pdf.rule=Host(`pdf.${DOMAIN}`)"
+      - "traefik.http.routers.pdf.entrypoints=websecure"
+      - "traefik.http.routers.pdf.tls.certresolver=cloudflare"
+      - "traefik.http.services.pdf.loadbalancer.server.port=8080"
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    environment:
+      - SEARXNG_BASE_URL=https://search.${DOMAIN}
+      - INSTANCE_NAME=searcher
+    ports:
+      - "0.0.0.0:8083:8080"
+    volumes:
+      - ${APPDATA_PATH}/searxng:/etc/searxng
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.search.rule=Host(`search.${DOMAIN}`)"
+      - "traefik.http.routers.search.entrypoints=websecure"
+      - "traefik.http.routers.search.tls.certresolver=cloudflare"
+      - "traefik.http.services.search.loadbalancer.server.port=8080"
+
+  code-server:
+    image: linuxserver/code-server:latest
+    container_name: code-server
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - PASSWORD=${CODE_PASSWORD}
+      - SUDO_PASSWORD=${CODE_SUDO_PASSWORD}
+      - DEFAULT_WORKSPACE=/config/workspace
+    volumes:
+      - ${APPDATA_PATH}/code-server:/config
+      - /opt/stacks:/config/workspace/stacks
+      - /home/homelab:/config/workspace/homelab
+      - /opt/stacks/scripts/code-server-init.sh:/custom-cont-init.d/code-server-init.sh:ro
+    ports:
+      - "0.0.0.0:8443:8443"
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.code.rule=Host(`code.${DOMAIN}`)"
+      - "traefik.http.routers.code.entrypoints=websecure"
+      - "traefik.http.routers.code.tls.certresolver=cloudflare"
+      - "traefik.http.services.code.loadbalancer.server.port=8443"
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+    ports:
+      - "0.0.0.0:8084:8080"
+    volumes:
+      - ${APPDATA_PATH}/open-webui:/app/backend/data
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chat.rule=Host(`chat.${DOMAIN}`)"
+      - "traefik.http.routers.chat.entrypoints=websecure"
+      - "traefik.http.routers.chat.tls.certresolver=cloudflare"
+      - "traefik.http.services.chat.loadbalancer.server.port=8080"
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf
+    container_name: audiobookshelf
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${APPDATA_PATH}/audiobookshelf/config:/config
+      - /mnt/audiobooks:/audiobooks:ro
+      - ${APPDATA_PATH}/audiobookshelf/podcasts:/podcasts
+      - ${APPDATA_PATH}/audiobookshelf/metadata:/metadata
+    ports:
+      - "0.0.0.0:13378:80"
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.books.rule=Host(`books.${DOMAIN}`)"
+      - "traefik.http.routers.books.entrypoints=websecure"
+      - "traefik.http.routers.books.tls.certresolver=cloudflare"
+      - "traefik.http.services.books.loadbalancer.server.port=80"
+
+  n8n:
+    image: n8nio/n8n:1.117.1-arm64
+    container_name: n8n
+    user: "0:0"
+    environment:
+      - TZ=${TZ}
+      - N8N_PORT=5678
+      - NODE_ENV=production
+      - GENERIC_TIMEZONE=${TZ}
+      - N8N_HOST=n8n.${DOMAIN}
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://n8n.${DOMAIN}
+      - N8N_USER_FOLDER=/home/node/.n8n
+      - DB_TYPE=sqlite
+      - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
+    volumes:
+      - ${APPDATA_PATH}/n8n:/home/node/.n8n
+    ports:
+      - "0.0.0.0:5678:5678"
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.${DOMAIN}`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls.certresolver=cloudflare"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+
+  homarr:
+    image: ghcr.io/homarr-labs/homarr:latest
+    container_name: homarr
+    environment:
+      - TZ=${TZ}
+      - SECRET_ENCRYPTION_KEY=${HOMARR_SECRET_KEY}
+      - AUTH_PROVIDERS=credentials
+      - AUTH_SESSION_EXPIRY_TIME=30d
+      - DB_DRIVER=better-sqlite3
+      - DB_DIALECT=sqlite
+    volumes:
+      - ${APPDATA_PATH}/homarr:/appdata
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "0.0.0.0:7575:7575"
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`dashboard.${DOMAIN}`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls.certresolver=cloudflare"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=7575"
+
+  paperless-ngx:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless-ngx
+    environment:
+      - TZ=${TZ}
+      - PAPERLESS_TIME_ZONE=${TZ}
+      - PAPERLESS_SECRET_KEY=${PAPERLESS_SECRET_KEY}
+      - PAPERLESS_URL=https://paperless.${DOMAIN}
+      - PAPERLESS_CSRF_TRUSTED_ORIGINS=https://paperless.${DOMAIN}
+      - PAPERLESS_ALLOWED_HOSTS=paperless.${DOMAIN},paperless-ngx,localhost,${RPI_HOME_IP}
+      - PAPERLESS_OCR_LANGUAGE=eng
+      - PAPERLESS_OCR_LANGUAGES=eng
+      - PAPERLESS_FILENAME_FORMAT={created}-{correspondent}-{title}
+      - PAPERLESS_DBENGINE=postgresql
+      - PAPERLESS_DBHOST=postgres-base
+      - PAPERLESS_DBPORT=5432
+      - PAPERLESS_DBNAME=paperless
+      - PAPERLESS_DBUSER=paperless
+      - PAPERLESS_DBPASS=${PAPERLESS_DB_PASSWORD}
+      - PAPERLESS_REDIS=redis://redis-base:6379
+      - PAPERLESS_CONSUMER_POLLING=0
+      - USERMAP_UID=${PUID}
+      - USERMAP_GID=${PGID}
+    volumes:
+      - ${APPDATA_PATH}/paperless-ngx/data:/usr/src/paperless/data
+      - ${APPDATA_PATH}/paperless-ngx/media:/usr/src/paperless/media
+      - ${APPDATA_PATH}/paperless-ngx/consume:/usr/src/paperless/consume
+      - ${APPDATA_PATH}/paperless-ngx/export:/usr/src/paperless/export
+    ports:
+      - "0.0.0.0:8000:8000"
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.paperless.rule=Host(`paperless.${DOMAIN}`)"
+      - "traefik.http.routers.paperless.entrypoints=websecure"
+      - "traefik.http.routers.paperless.tls.certresolver=cloudflare"
+      - "traefik.http.services.paperless.loadbalancer.server.port=8000"
+
+networks:
+  traefik:
+    external: true

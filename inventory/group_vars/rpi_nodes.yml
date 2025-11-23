@@ -1,0 +1,51 @@
+# Common variables for all Raspberry Pi nodes
+---
+# System Configuration
+timezone: 'Europe/Vienna' # Adjust for Austria
+ntp_servers:
+  - '0.at.pool.ntp.org'
+  - '1.at.pool.ntp.org'
+
+# Docker Configuration
+docker_users:
+  - '{{ ansible_user }}'
+
+# Homelab Paths
+homelab_base_path: '/opt/homelab'
+backup_path: '/opt/backups'
+compose_base_path: '{{ homelab_base_path }}/stacks'
+
+# Environment variable mappings (used by Ansible tasks)
+STACKS_PATH: '/opt/stacks'
+APPDATA_PATH: '/srv/appdata'
+BACKUP_PATH: '/opt/backups'
+DB_DUMP_PATH: '/tmp/db_dumps'
+
+# Network Configuration
+wifi_ssid: 'law' # Replace with your actual WiFi SSID
+wifi_password: '{{ vault_wifi_password }}' # Store password in vault
+
+# Default Node Settings
+# (These can be overridden in host_vars for specific nodes)
+apps_enabled: false
+
+# Ansible Authentication - using vault variable from all.yml
+ansible_sudo_pass: '{{ vault_rpi_sudo_pass }}'
+backup_enabled: true
+backup_schedule: '0 2 * * *' # 2 AM daily
+
+# Backup Automation (used by backup-automation role)
+BACKUP_AUTOMATION_ENABLED: true
+BACKUP_MIRROR_ENABLED: false  # Optional weekly mirror to Linode
+BACKUP_WITH_MEDIA_ENABLED: false  # Monthly full backup with media (pre-move only)
+
+# Network Configuration
+tailscale_enabled: true
+firewall_enabled: true
+ssh_port: 22
+
+# Monitoring
+log_retention_days: 7
+disk_cleanup_enabled: true
+# Reference vault variables
+# ansible_sudo_pass moved to specific playbooks that need sudo privileges
