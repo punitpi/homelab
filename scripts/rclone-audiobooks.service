@@ -1,0 +1,38 @@
+[Unit]
+Description=RClone Mount for Audiobooks
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=homelab
+Group=homelab
+EnvironmentFile=/etc/rclone-mounts.env
+Environment=RCLONE_CONFIG=/home/homelab/.config/rclone/rclone.conf
+
+# Mount command - uses ${AUDIOBOOKS_REMOTE} and ${AUDIOBOOKS_MOUNT} from env file
+ExecStart=/usr/bin/rclone mount ${AUDIOBOOKS_REMOTE} ${AUDIOBOOKS_MOUNT} \
+  --config /home/homelab/.config/rclone/rclone.conf \
+  --vfs-cache-mode full \
+  --vfs-cache-max-size 50G \
+  --vfs-cache-max-age 240h \
+  --vfs-read-chunk-size 128M \
+  --vfs-read-chunk-size-limit off \
+  --buffer-size 256M \
+  --dir-cache-time 240h \
+  --poll-interval 15s \
+  --allow-other \
+  --umask 002 \
+  --log-level INFO \
+  --log-file /var/log/rclone-audiobooks.log
+
+ExecStop=/bin/fusermount -uz ${AUDIOBOOKS_MOUNT}
+
+# Restart settings
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,64 @@
+---
+- name: Create required directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0755'
+  loop:
+    - '{{ STACKS_PATH }}'
+    - '{{ STACKS_PATH }}/env'
+    - '{{ STACKS_PATH }}/scripts'
+    - '{{ APPDATA_PATH }}'
+    - '{{ BACKUP_PATH }}'
+    - '{{ DB_DUMP_PATH }}'
+
+- name: Copy common environment file
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../env/common.env'
+    dest: '{{ STACKS_PATH }}/env/common.env'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0644'
+
+- name: Set NODE_NAME in local.env
+  ansible.builtin.lineinfile:
+    path: '{{ STACKS_PATH }}/env/local.env'
+    line: 'NODE_NAME={{ inventory_hostname }}'
+    regexp: '^NODE_NAME='
+    create: yes
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0644'
+
+- name: Copy secrets environment file
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../env/secrets.env'
+    dest: '{{ STACKS_PATH }}/env/secrets.env'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0600'
+  ignore_errors: true # Allow this to fail if secrets.env doesn't exist
+
+- name: Copy backup scripts
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../scripts/{{ item }}'
+    dest: '{{ BACKUP_PATH }}/{{ item }}'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0750'
+  loop:
+    - backup_now.sh
+    - db_dump.sh
+    - restore_latest.sh
+
+- name: Copy application init scripts
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../scripts/{{ item }}'
+    dest: '{{ STACKS_PATH }}/scripts/{{ item }}'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0755'
+  loop:
+    - code-server-init.sh

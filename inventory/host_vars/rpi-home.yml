@@ -1,0 +1,24 @@
+# Host-specific configuration for rpi-home
+---
+# This is the primary application host
+apps_enabled: true
+primary_node: true
+
+# Backup Configuration
+backup_enabled: true
+backup_schedule: '0 2 * * *' # 2 AM daily
+
+# Resource Limits
+max_cpu_percent: 80
+max_memory_percent: 85
+
+# Services hosted on this node
+hosted_services:
+  - 'base-stack'
+  - 'apps-stack'
+  - 'databases'
+  - 'backup-automation'
+
+# Node role in cluster
+node_role: 'primary'
+failover_target: 'rpi-friend'

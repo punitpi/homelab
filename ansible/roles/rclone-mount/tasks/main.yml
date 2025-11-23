@@ -1,0 +1,77 @@
+---
+- name: Install fuse for rclone mount
+  ansible.builtin.apt:
+    name: fuse3
+    state: present
+    update_cache: yes
+  become: true
+
+- name: Enable user_allow_other in fuse.conf
+  ansible.builtin.lineinfile:
+    path: /etc/fuse.conf
+    regexp: '^#?user_allow_other'
+    line: 'user_allow_other'
+    create: yes
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+
+- name: Create mount point directory
+  ansible.builtin.file:
+    path: /mnt/audiobooks
+    state: directory
+    owner: homelab
+    group: homelab
+    mode: '0755'
+  become: true
+
+- name: Create rclone cache directory
+  ansible.builtin.file:
+    path: /home/homelab/.cache/rclone
+    state: directory
+    owner: homelab
+    group: homelab
+    mode: '0755'
+
+- name: Deploy rclone mounts environment file
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../env/rclone-mounts.env'
+    dest: /etc/rclone-mounts.env
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+
+- name: Deploy rclone-audiobooks systemd service
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../scripts/rclone-audiobooks.service'
+    dest: /etc/systemd/system/rclone-audiobooks.service
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Reload systemd
+
+- name: Create log file with proper permissions
+  ansible.builtin.file:
+    path: /var/log/rclone-audiobooks.log
+    state: touch
+    owner: homelab
+    group: homelab
+    mode: '0644'
+  become: true
+
+- name: Enable and start rclone-audiobooks service
+  ansible.builtin.systemd:
+    name: rclone-audiobooks
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  become: true
+
+- name: Wait for mount to be available
+  ansible.builtin.wait_for:
+    path: /mnt/audiobooks
+    state: present
+    timeout: 30

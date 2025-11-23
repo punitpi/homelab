@@ -4,6 +4,10 @@
 # Never commit actual secrets
 env/secrets.env
 env/local.env
+
+# Generated .env files in stack directories (created by Ansible)
+stacks/*/.env
+
 *.key
 *.pem
 *.p12
@@ -94,6 +98,9 @@ temp/
 .tmp/
 
 # === LOCAL CUSTOMIZATIONS ===
+# Active node tracking (local state, not committed)
+.active-node
+
 # Local override files (node-specific configs)
 local.*.yml
 local.*.yaml

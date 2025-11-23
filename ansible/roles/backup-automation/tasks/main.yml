@@ -1,0 +1,106 @@
+---
+- name: Ensure backup directory exists
+  ansible.builtin.file:
+    path: /opt/backups
+    state: directory
+    owner: homelab
+    group: homelab
+    mode: '0755'
+
+- name: Allow homelab user to run backup scripts with sudo without password
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/homelab-backups
+    mode: '0440'
+    owner: root
+    group: root
+    content: |
+      # Allow homelab user to run backup/restore scripts without password
+      homelab ALL=(ALL) NOPASSWD: /opt/backups/backup_now.sh
+      homelab ALL=(ALL) NOPASSWD: /opt/backups/restore_latest.sh
+      homelab ALL=(ALL) NOPASSWD: /opt/backups/db_dump.sh
+      homelab ALL=(ALL) NOPASSWD: /usr/bin/systemd-run
+  become: true
+
+- name: Copy backup scripts
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../scripts/{{ item }}'
+    dest: '/opt/backups/{{ item }}'
+    owner: homelab
+    group: homelab
+    mode: '0750'
+  loop:
+    - backup_now.sh
+    - db_dump.sh
+    - restore_latest.sh
+
+- name: Create backup cron job for primary nodes
+  ansible.builtin.cron:
+    name: '{{ item.name }}'
+    minute: '{{ item.minute }}'
+    hour: '{{ item.hour }}'
+    day: "{{ item.day | default('*') }}"
+    month: "{{ item.month | default('*') }}"
+    weekday: "{{ item.weekday | default('*') }}"
+    job: '{{ item.job }}'
+    user: homelab
+    state: present
+  loop:
+    - name: 'Daily homelab backup'
+      minute: '0'
+      hour: '3'
+      job: 'sudo /opt/backups/backup_now.sh >> /var/log/backup.log 2>&1'
+    - name: 'Weekly backup mirror to Linode (optional)'
+      minute: '0'
+      hour: '5'
+      weekday: '0'
+      job: 'sudo /opt/backups/backup_now.sh --copy-to-linode >> /var/log/backup_mirror.log 2>&1'
+      state: "{{ 'present' if BACKUP_MIRROR_ENABLED | default(false) | bool else 'absent' }}"
+    - name: 'Monthly full backup with media (pre-move only)'
+      minute: '0'
+      hour: '6'
+      day: '1-7'
+      weekday: '0'
+      job: 'sudo /opt/backups/backup_now.sh --with-media >> /var/log/backup_full.log 2>&1'
+      state: "{{ 'present' if BACKUP_WITH_MEDIA_ENABLED | default(false) | bool else 'absent' }}"
+  when: BACKUP_AUTOMATION_ENABLED | default(false) | bool
+
+- name: Remove all backup cron jobs when automation is disabled
+  ansible.builtin.cron:
+    name: '{{ item }}'
+    state: absent
+    user: homelab
+  loop:
+    - 'Daily homelab backup'
+    - 'Weekly backup mirror to Linode (optional)'
+    - 'Monthly full backup with media (pre-move only)'
+  when: not (BACKUP_AUTOMATION_ENABLED | default(false) | bool)
+
+- name: Create logrotate configuration for backup logs
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/homelab-backups
+    mode: '0644'
+    owner: root
+    group: root
+    content: |
+      /var/log/backup*.log {
+          daily
+          missingok
+          rotate 30
+          compress
+          notifempty
+          create 0644 root root
+      }
+  when: BACKUP_AUTOMATION_ENABLED | default(false) | bool
+
+- name: Remove logrotate configuration when automation is disabled
+  ansible.builtin.file:
+    path: /etc/logrotate.d/homelab-backups
+    state: absent
+  when: not (BACKUP_AUTOMATION_ENABLED | default(false) | bool)
+
+- name: Ensure cron service is running
+  ansible.builtin.systemd:
+    name: cron
+    state: started
+    enabled: true
+  when: BACKUP_AUTOMATION_ENABLED | default(false) | bool

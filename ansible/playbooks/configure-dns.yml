@@ -1,0 +1,97 @@
+---
+# Configure DNS with Tailscale + Fallback
+# This creates the systemd-resolved configuration that's currently working on rpi-home
+# Run with: ansible-playbook -i inventory/hosts.ini ansible/playbooks/configure-dns.yml --ask-vault-pass
+
+- name: Configure DNS with Tailscale and Public Fallbacks
+  hosts: rpi_nodes
+  become: true
+
+  tasks:
+    - name: Display what we're configuring
+      ansible.builtin.debug:
+        msg: |
+          Configuring DNS with:
+          - Primary: Tailscale DNS (100.100.100.100)
+          - Fallback: Quad9 (9.9.9.9, 149.112.112.112) → Cloudflare (1.1.1.1, 1.0.0.1)
+          - Search domain: ~tailb99699.ts.net
+
+    - name: Create systemd-resolved drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        mode: '0755'
+
+    - name: Configure systemd-resolved with Tailscale DNS and fallbacks
+      ansible.builtin.copy:
+        content: |
+          [Resolve]
+          DNS=100.100.100.100
+          FallbackDNS=9.9.9.9 149.112.112.112 1.1.1.1 1.0.0.1
+          Domains=~tailb99699.ts.net
+        dest: /etc/systemd/resolved.conf.d/tailscale-with-fallback.conf
+        mode: '0644'
+      register: resolved_config
+
+    - name: Restart systemd-resolved
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+      when: resolved_config.changed
+
+    - name: Enable Tailscale DNS acceptance
+      ansible.builtin.shell: |
+        tailscale set --accept-dns=true
+      register: ts_enabled
+
+    - name: Verify /etc/resolv.conf is managed by systemd-resolved
+      ansible.builtin.stat:
+        path: /etc/resolv.conf
+      register: resolv_conf
+
+    - name: Display resolv.conf status
+      ansible.builtin.debug:
+        msg: |
+          /etc/resolv.conf is {{ 'a symlink' if resolv_conf.stat.islnk else 'a regular file' }}
+          {{ 'Points to: ' + resolv_conf.stat.lnk_source if resolv_conf.stat.islnk else '' }}
+
+    - name: Test DNS resolution
+      ansible.builtin.shell: |
+        # Test general internet
+        nslookup google.com 127.0.0.53 > /dev/null && echo " Internet DNS works" || echo " Internet DNS failed"
+
+        # Test Tailscale MagicDNS
+        nslookup ub-house-green > /dev/null && echo " Tailscale MagicDNS works" || echo " Tailscale MagicDNS failed"
+      register: dns_test
+      changed_when: false
+
+    - name: Display DNS test results
+      ansible.builtin.debug:
+        msg: "{{ dns_test.stdout_lines }}"
+
+    - name: Display current resolv.conf
+      ansible.builtin.shell: |
+        cat /etc/resolv.conf
+      register: current_resolv
+      changed_when: false
+
+    - name: Show resolv.conf
+      ansible.builtin.debug:
+        msg: "Current /etc/resolv.conf:\n{{ current_resolv.stdout }}"
+
+    - name: Display final summary
+      ansible.builtin.debug:
+        msg: |
+           DNS configuration complete on {{ inventory_hostname }}!
+
+          Configuration:
+          - Tailscale DNS (100.100.100.100) - Primary for .ts.net domains
+          - Quad9 (9.9.9.9, 149.112.112.112) - Fallback #1
+          - Cloudflare (1.1.1.1, 1.0.0.1) - Fallback #2
+          - systemd-resolved manages /etc/resolv.conf
+
+          This provides:
+           Tailscale MagicDNS for internal hostnames
+           Reliable fallback if Tailscale DNS is slow/unreachable
+           No Docker DNS errors
+           Works after reboot

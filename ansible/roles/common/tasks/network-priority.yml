@@ -1,0 +1,66 @@
+---
+# Configure network interface priority - Ethernet over WiFi
+- name: Check current netplan configuration
+  find:
+    paths: /etc/netplan/
+    patterns: '*.yaml'
+  register: netplan_files
+
+- name: Display current netplan files
+  debug:
+    msg: "Found netplan files: {{ netplan_files.files | map(attribute='path') | list }}"
+
+- name: Check if NetworkManager or systemd-networkd is used
+  shell: networkctl status
+  register: network_renderer
+  ignore_errors: yes
+
+- name: Create netplan configuration with Ethernet priority
+  copy:
+    dest: /etc/netplan/01-network-priority.yaml
+    content: |
+      network:
+        version: 2
+        renderer: networkd
+        ethernets:
+          eth0:
+            dhcp4: true
+            dhcp4-overrides:
+              route-metric: 100
+        wifis:
+          wlan0:
+            dhcp4: true
+            dhcp4-overrides:
+              route-metric: 200
+            access-points:
+              "{{ wifi_ssid }}":
+                password: "{{ wifi_password }}"
+    backup: yes
+    mode: '0600'
+  notify: apply netplan
+
+- name: Remove old netplan files that might conflict
+  file:
+    path: '{{ item.path }}'
+    state: absent
+  loop: '{{ netplan_files.files }}'
+  when:
+    - item.path != "/etc/netplan/01-network-priority.yaml"
+    - "'cloud-init' not in item.path"
+  notify: apply netplan
+
+- name: Apply netplan configuration
+  shell: netplan apply
+  become: yes
+
+- name: Wait for network to stabilize
+  pause:
+    seconds: 10
+
+- name: Verify network configuration
+  shell: ip route show
+  register: route_table
+
+- name: Display routing table
+  debug:
+    msg: '{{ route_table.stdout_lines }}'

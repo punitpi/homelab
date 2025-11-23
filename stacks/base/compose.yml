@@ -1,0 +1,79 @@
+services:
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    command:
+      # API
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=traefik"
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Let's Encrypt with Cloudflare DNS challenge
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge=true"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.cloudflare.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.cloudflare.acme.storage=/acme/acme.json"
+      # Logging
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${APPDATA_PATH}/traefik/acme:/acme
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=cloudflare"
+      - "traefik.http.routers.traefik-dashboard.tls.domains[0].main=${DOMAIN}"
+      - "traefik.http.routers.traefik-dashboard.tls.domains[0].sans=*.${DOMAIN}"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-base
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${PG_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PAPERLESS_DB_PASSWORD=${PAPERLESS_DB_PASSWORD}
+    volumes:
+      - ${APPDATA_PATH}/postgres/data:/var/lib/postgresql/data
+      - ${STACKS_PATH}/../scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init-postgres.sh:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+    networks:
+      - traefik
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis-base
+    volumes:
+      - ${APPDATA_PATH}/redis/data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    name: traefik
+    driver: bridge

@@ -1,0 +1,66 @@
+---
+# Enable Tailscale DNS on all nodes
+# Run with: ansible-playbook -i inventory/hosts.ini ansible/playbooks/enable-tailscale-dns.yml --ask-vault-pass
+
+- name: Enable Tailscale DNS on All Nodes
+  hosts: rpi_nodes
+  become: true
+
+  tasks:
+    - name: Display current action
+      ansible.builtin.debug:
+        msg: "Enabling Tailscale DNS acceptance on {{ inventory_hostname }}"
+
+    - name: Check current Tailscale status
+      ansible.builtin.shell: |
+        tailscale status --json | jq -r '.Self.DNSName'
+      register: ts_status
+      changed_when: false
+
+    - name: Enable Tailscale DNS acceptance
+      ansible.builtin.shell: |
+        tailscale set --accept-dns=true
+      register: ts_dns_enabled
+
+    - name: Restart systemd-resolved to pick up Tailscale DNS
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+
+    - name: Wait for DNS to settle
+      ansible.builtin.pause:
+        seconds: 2
+
+    - name: Verify Tailscale is still connected
+      ansible.builtin.shell: |
+        tailscale status --json | jq -r '.BackendState'
+      register: ts_state
+      changed_when: false
+
+    - name: Test Tailscale MagicDNS
+      ansible.builtin.shell: |
+        nslookup ub-house-green > /dev/null && echo " Working" || echo " Failed"
+      register: dns_test
+      changed_when: false
+
+    - name: Display result
+      ansible.builtin.debug:
+        msg: |
+           Tailscale DNS enabled on {{ inventory_hostname }}
+          Status: {{ ts_status.stdout }}
+          State: {{ ts_state.stdout }}
+          MagicDNS: {{ dns_test.stdout }}
+
+    - name: Display final summary
+      ansible.builtin.debug:
+        msg: |
+           Tailscale DNS enabled!
+
+          What this means:
+          - Tailscale VPN connectivity works
+          - MagicDNS works (ub-house-green, etc.)
+          - DNS queries use Tailscale DNS (100.100.100.100)
+          - Fallback DNS from systemd-resolved config still applies
+
+          Note: If you experience DNS issues, run configure-dns.yml
+          to set up proper fallbacks with systemd-resolved
