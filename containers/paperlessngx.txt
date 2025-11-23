@@ -1,0 +1,34 @@
+docker create
+  --name='paperless-ngx'
+  --net='br0'
+  --ip='10.1.11.39'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="paperless-ngx"
+  -e 'TCP_PORT_8000'='8000'
+  -e 'PAPERLESS_REDIS'='redis://default@10.1.11.6:6379'
+  -e 'PAPERLESS_OCR_LANGUAGE'='eng'
+  -e 'PAPERLESS_OCR_LANGUAGES'='eng'
+  -e 'PAPERLESS_FILENAME_FORMAT'='{created}-{correspondent}-{title}'
+  -e 'PAPERLESS_TIME_ZONE'='Asia/Kolkata'
+  -e 'PAPERLESS_DBENGINE'='mariadb'
+  -e 'PAPERLESS_DBHOST'='10.1.11.5'
+  -e 'PAPERLESS_DBPORT'='3306'
+  -e 'PAPERLESS_DBNAME'='paperless'
+  -e 'PAPERLESS_DBPASS'='fjskldhvnsuhefalscm23487osidh'
+  -e 'PAPERLESS_DBUSER'='paperle'
+  -e 'PAPERLESS_IGNORE_DATES'=''
+  -e 'PAPERLESS_CONSUMER_POLLING'='0'
+  -e 'PAPERLESS_SECRET_KEY'='your-paperless-secret-key-here'
+  -e 'USERMAP_UID'='99'
+  -e 'USERMAP_GID'='100'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:8000]'
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/selfhosters/unRAID-CA-templates/master/templates/img/paperless.png'
+  -v '/mnt/user/appdata/paperless-ngx/data':'/usr/src/paperless/data':'rw'
+  -v '/mnt/user/docs/paperless/media/':'/usr/src/paperless/media':'rw'
+  -v '/mnt/user/docs/paperless/export':'/usr/src/paperless/consume':'rw'
+  -v '/mnt/user/docspaperless/export':'/usr/src/paperless/export':'rw' 'ghcr.io/paperless-ngx/paperless-ngx'
+f19b48bb6a92fd7685e083469ceb34349c8a8bcc1e55dd4ba9862217fbd90135

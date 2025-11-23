@@ -1,0 +1,18 @@
+docker run
+  -d
+  --name='SearXNG'
+  --net='br0'
+  --ip='10.1.11.23'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="SearXNG"
+  -e 'TCP_PORT_8080'='8080'
+  -e 'INSTANCE_NAME'='searcher'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:8080]/'
+  -l net.unraid.docker.icon='https://github.com/kilrah/unraid-docker-templates/raw/main/icons/searxng.png'
+  -v '/mnt/user/appdata/searxng/':'/etc/searxng':'rw'
+  --dns 10.1.11.1 'searxng/searxng'
+78d3b002cbcc9c04e08f01b824f7a43b5ade1f27dc28b565fea1eacabb8e451d

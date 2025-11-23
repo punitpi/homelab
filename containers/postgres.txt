@@ -1,0 +1,18 @@
+docker run
+  -d
+  --name='postgresql14'
+  --net='br0'
+  --ip='10.1.11.9'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="postgresql14"
+  -e 'POSTGRES_PASSWORD'='your-postgres-password-here'
+  -e 'POSTGRES_USER'='rootsghw'
+  -e 'POSTGRES_DB'=''
+  -e 'TCP_PORT_5432'='5432'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.icon='https://github.com/juusujanar/unraid-templates/raw/master/img/PostgreSQL-logo.png'
+  -v '/mnt/user/appdata/postgresql14':'/var/lib/postgresql/data':'rw' 'postgres:14'
+2adc2576792d06ddbcf3516660318adf66e73db49a9a5eb605bf8ee22b90cbaa

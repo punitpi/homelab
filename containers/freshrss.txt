@@ -1,0 +1,19 @@
+docker run
+  -d
+  --name='freshrss'
+  --net='br0'
+  --ip='10.1.11.101'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="freshrss"
+  -e 'TCP_PORT_80'='80'
+  -e 'PUID'='99'
+  -e 'PGID'='100'
+  -e 'UMASK'='022'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:80]'
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/freshrss-logo.png'
+  -v '/mnt/user/appdata/freshrss':'/config':'rw' 'lscr.io/linuxserver/freshrss'
+c7b88bfa621af73d470ebd65b1bc489d79314f09fbfeb433423888d4832e7130

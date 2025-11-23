@@ -1,0 +1,18 @@
+docker run
+  -d
+  --name='open-webui'
+  --net='br0'
+  --ip='10.1.11.50'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="open-webui"
+  -e 'TCP_PORT_8080'='8080'
+  -e 'OLLAMA_BASE_URL'='http://OLLAMA-IP:11434'
+  -e 'OPENAI_API_KEY'=''
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:8080]/'
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/open-webui/open-webui/main/static/favicon.png'
+  -v '/mnt/user/appdata/ollama-webui':'/app/backend/data':'rw' 'ghcr.io/open-webui/open-webui:main'
+4b7caefacc246ee79e2492adf1d577b814181ab3c9e1cfe92f9ff81a86dbe9b0

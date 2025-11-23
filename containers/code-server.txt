@@ -1,0 +1,28 @@
+docker run
+  -d
+  --name='code-server'
+  --net='br0'
+  --ip='10.1.11.150'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="code-server"
+  -e 'TCP_PORT_8443'='8443'
+  -e 'PASSWORD'='your-password-here'
+  -e 'HASHED_PASSWORD'=''
+  -e 'SUDO_PASSWORD'='your-sudo-password-here'
+  -e 'SUDO_PASSWORD_HASH'=''
+  -e 'PROXY_DOMAIN'='code.li.puneeth.io'
+  -e 'DEFAULT_WORKSPACE'='/config/workspace'
+  -e 'PUID'='99'
+  -e 'PGID'='100'
+  -e 'UMASK'='022'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:8443]'
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/code-server-logo.png'
+  -v '/mnt/user/codespace/':'/config/codespace':'rw'
+  -v '/mnt/user/appdata/':'/config/codespace/appdata':'rw'
+  -v '/mnt/user/appdata/code-server':'/config':'rw'
+  --dns 10.1.11.1 'lscr.io/linuxserver/code-server'
+43815d6f6435bb3959c81af597cd90e630bc83fe97ccb522f9823ea31220f1cf

@@ -1,0 +1,27 @@
+docker run
+  -d
+  --name='authentik'
+  --net='br0'
+  --ip='10.1.11.22'
+  --pids-limit 2048
+  --privileged=true
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="authentik"
+  -e 'TCP_PORT_9000'='9000'
+  -e 'TCP_PORT_9443'='9443'
+  -e 'AUTHENTIK_REDIS__HOST'='10.1.11.6'
+  -e 'AUTHENTIK_POSTGRESQL__HOST'='10.1.11.9'
+  -e 'AUTHENTIK_POSTGRESQL__USER'='rootsghw'
+  -e 'AUTHENTIK_POSTGRESQL__NAME'='authentik'
+  -e 'AUTHENTIK_POSTGRESQL__PASSWORD'='your-postgres-password-here'
+  -e 'AUTHENTIK_ERROR_REPORTING__ENABLED'='true'
+  -e 'AUTHENTIK_SECRET_KEY'='your-authentik-secret-key-here'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:9000]'
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/ibracorp/app-logos/main/authentik/authentik.png'
+  -v '/mnt/user/appdata/authentik/templates':'/templates':'rw'
+  -v '/var/run/docker.sock':'/var/run/docker.sock':'ro'
+  -v '/mnt/user/appdata/authentik/media':'/media':'rw' 'beryju/authentik:latest' server
+e2ab4670613b60c7e1599dad5408feb2880f56623f676223723aaddf89988136

@@ -1,0 +1,28 @@
+docker run
+  -d
+  --name='authentik-worker'
+  --net='br0'
+  --ip='10.1.11.20'
+  --pids-limit 2048
+  --privileged=true
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="authentik-worker"
+  -e 'AUTHENTIK_REDIS__HOST'='10.1.11.6'
+  -e 'AUTHENTIK_POSTGRESQL__HOST'='10.1.11.9'
+  -e 'AUTHENTIK_POSTGRESQL__USER'='rootsghw'
+  -e 'AUTHENTIK_POSTGRESQL__NAME'='authentik'
+  -e 'AUTHENTIK_POSTGRESQL__PASSWORD'='your-postgres-password-here'
+  -e 'AUTHENTIK_ERROR_REPORTING__ENABLED'='true'
+  -e 'AUTHENTIK_SECRET_KEY'='your-authentik-secret-key-here'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/ibracorp/app-logos/main/authentik-worker/authentik_worker.png'
+  -v '/mnt/user/appdata/authentik/backups':'/backups':'rw'
+  -v '/mnt/user/appdata/authentik/media':'/media':'rw'
+  -v '/mnt/user/appdata/authentik/certs':'/certs':'rw'
+  -v '/var/run/docker.sock':'/var/run/docker.sock':'rw'
+  -v '/mnt/user/appdata/authentik/templates':'/templates':'rw'
+  --restart unless-stopped
+  -u root 'beryju/authentik:latest' worker
+9ec3935fe617fda45e84aaa7c04a61ac267c007d2318c3691606edabc6516178

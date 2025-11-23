@@ -1,0 +1,16 @@
+docker run
+  -d
+  --name='Redis-1-1'
+  --net='br0'
+  --ip='10.1.11.6'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="Redis-1-1"
+  -e 'TCP_PORT_6379'='6379'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/juusujanar/unraid-templates/master/img/Redis-logo.png'
+  -v '/mnt/user/appdata/redis/':'/usr/local/etc/redis':'rw'
+  -v '/mnt/user/appdata/redis/data':'/var/lib/redis':'rw' 'redis'
+3b12624684869b6e5ff93c627e8966c81c63c9128ec14eed972ecdb9d0feea9f

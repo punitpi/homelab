@@ -1,0 +1,24 @@
+docker run
+  -d
+  --name='StirlingPDF'
+  --net='br0'
+  --ip='10.1.11.38'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="StirlingPDF"
+  -e 'TCP_PORT_8080'='8080'
+  -e 'SYSTEM_GOOGLEVISIBILITY'='false'
+  -e 'SYSTEM_DEFAULT_LOCALE'='en_GB'
+  -e 'DOCKER_ENABLE_SECURITY'='false'
+  -e 'METRICS_ENABLED'='true'
+  -e 'SYSTEM_CONNECTIONTIMEOUTMINUTES'='3000000'
+  -e 'SYSTEM_ROOT_URI_PATH'='/'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:8080]'
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/Frooodle/Stirling-PDF/main/src/main/resources/static/favicon.png'
+  -v '/mnt/user/appdata/Stirling-PDF/OCR':'/usr/share/tesseract-ocr/5/tessdata':'rw'
+  -v '/mnt/user/appdata/Stirling-PDF/configs/':'/configs':'rw'
+  -v '/mnt/user/appdata/Stirling-PDF/customFiles':'/customFiles':'rw' 'frooodle/s-pdf:alpha'
+5043d6107dc2fea64df2ad9fc4de8bd4b95972a38d568380f42c5fdf02eed8ce

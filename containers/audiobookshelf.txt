@@ -1,0 +1,18 @@
+docker run
+  -d
+  --name='audiobookshelf'
+  --net='br0'
+  --ip='10.1.11.37'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="audiobookshelf"
+  -e 'TCP_PORT_80'='13378'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:80]'
+  -l net.unraid.docker.icon='https://github.com/advplyr/audiobookshelf/raw/master/client/static/Logo.png'
+  -v '/mnt/user/data/media/audiobooks/':'/audiobooks':'rw'
+  -v '/mnt/user/appdata/audiobookshelf':'/config':'rw'
+  -v '/mnt/user/appdata/audiobookshelf/metadata/':'/metadata':'rw' 'ghcr.io/advplyr/audiobookshelf'
+264a47990fd587a05930b1cb4eacaee7275fb6bd46b470e094dbc849adf74d88

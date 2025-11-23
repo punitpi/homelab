@@ -1,0 +1,19 @@
+docker run
+  -d
+  --name='Wallos'
+  --net='br0'
+  --ip='10.1.11.44'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="Wallos"
+  -e 'TZ'='Asia/Kolkata'
+  -e 'TCP_PORT_80'='8282'
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:80]/'
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/devzwf/unraid-docker-templates/main/images/wallos.png'
+  -v '/mnt/user/appdata/wallos/db':'/var/www/html/db':'rw'
+  -v '/mnt/user/appdata/wallos/logos':'/var/www/html/images/uploads/logos':'rw'
+  --restart unless-stopped 'bellamy/wallos:latest'
+792c9a0d4635fecb424866a8aeee005bbe64cf57f7713ae6594285bb6f5b8074

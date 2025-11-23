@@ -1,0 +1,35 @@
+docker run
+  -d
+  --name='mealie'
+  --net='br0'
+  --ip='10.1.11.43'
+  --pids-limit 2048
+  -e TZ="Asia/Calcutta"
+  -e HOST_OS="Unraid"
+  -e HOST_HOSTNAME="void"
+  -e HOST_CONTAINERNAME="mealie"
+  -e 'TCP_PORT_9000'='3000'
+  -e 'ALLOW_SIGNUP'='false'
+  -e 'DEFAULT_EMAIL'='builder023@puneeth.io'
+  -e 'SMTP_FROM_EMAIL'='changeme@gmail.com'
+  -e 'SMTP_HOST'='smtp.gmail.com'
+  -e 'SMTP_USER'='changeme@email.com'
+  -e 'SMTP_PASSWORD'='your-smtp-password-here'
+  -e 'SMTP_PORT'='587'
+  -e 'BASE_URL'='https://mealie.igh.one'
+  -e 'DEFAULT_GROUP'='home'
+  -e 'PUID'='99'
+  -e 'PGID'='100'
+  -e 'WEB_CONCURRENCY'='1'
+  -e 'MAX_WORKERS'='1'
+  -e 'DB_ENGINE'='sqlite'
+  -e 'POSTGRES_USER'=''
+  -e 'POSTGRES_PASSWORD'='your-postgres-password-here'
+  -e 'POSTGRES_SERVER'=''
+  -e 'POSTGRES_PORT'=''
+  -e 'POSTGRES_DB'=''
+  -l net.unraid.docker.managed=dockerman
+  -l net.unraid.docker.webui='http://[IP]:[PORT:9000]'
+  -l net.unraid.docker.icon='https://raw.githubusercontent.com/selfhosters/unRAID-CA-templates/master/templates/img/mealiev1.png'
+  -v '/mnt/user/appdata/mealie':'/app/data':'rw' 'ghcr.io/mealie-recipes/mealie:latest'
+11051b9bb61aef70b593088b293c42022b853413a62768c73ed5a1f40adfa7f0
