@@ -30,6 +30,25 @@
     executable: /bin/bash
   become: true
 
+- name: Create Traefik config directory for base stack
+  ansible.builtin.file:
+    path: '{{ STACKS_PATH }}/{{ stack_name }}/traefik-config'
+    state: directory
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0755'
+  when: stack_name == 'base'
+
+- name: Copy Traefik middlewares config for base stack
+  ansible.builtin.copy:
+    src: ../../../stacks/base/traefik-config/middlewares.yml
+    dest: '{{ STACKS_PATH }}/base/traefik-config/middlewares.yml'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0644'
+  when: stack_name == 'base'
+
+
 - name: Remove existing Traefik directory if present (cleanup)
   ansible.builtin.file:
     path: '{{ STACKS_PATH }}/{{ stack_name }}/traefik'
@@ -95,11 +114,11 @@
     state: present
     pull: missing
     remove_orphans: true
-    timeout: 1800
+    timeout: 3600
   register: compose_output
   environment:
     APPS_ENABLED: "{{ APPS_ENABLED | default('false') }}"
-  async: 1800
+  async: 3600
   poll: 10
 
 - name: Debug compose output

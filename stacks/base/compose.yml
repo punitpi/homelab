@@ -1,6 +1,6 @@
 services:
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
     security_opt:
@@ -15,6 +15,8 @@ services:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=traefik"
+      - "--providers.file.directory=/config"
+      - "--providers.file.watch=true"
       # Entrypoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
@@ -34,6 +36,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${APPDATA_PATH}/traefik/acme:/acme
+      - ${STACKS_PATH}/base/traefik-config:/config:ro
     networks:
       - traefik
     labels:
