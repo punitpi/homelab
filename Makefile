@@ -6,7 +6,7 @@ all: help
 # Variables
 ANSIBLE_PLAYBOOK=ansible-playbook -i inventory/hosts.ini
 
-.PHONY: help validate deploy-base deploy-apps deploy-cloud deploy-backup-automation deploy-rclone-mount deploy-all backup-now backup-all restore-latest restore-test watch-backup backup-status backup-log failover check-health show-resources show-logs update-packages configure-network configure-dns enable-tailscale-dns disable-tailscale-dns reboot-nodes pull-images update-images cleanup
+.PHONY: help validate deploy-base deploy-apps deploy-cloud deploy-backup-automation deploy-rclone-mount deploy-all backup-now backup-all restore-latest restore-test watch-backup backup-status backup-log failover check-health check-urls show-resources show-logs update-packages configure-network configure-dns enable-tailscale-dns disable-tailscale-dns reboot-nodes pull-images update-images cleanup authentik-logs authentik-status authentik-restart
 
 help:
 	@echo "Homelab Management Commands"
@@ -53,8 +53,15 @@ help:
 	@echo "  make cleanup target=<type>    - Clean up resources (cloud-base, docker, rpi-docker, cloud-docker)"
 	@echo ""
 	@echo "Monitoring:"
+	@echo "  make check-health             - Check Docker container status on all nodes"
+	@echo "  make check-urls               - Check if all service URLs are accessible"
 	@echo "  make show-logs                - Show recent Docker logs from a host"
 	@echo "  make show-resources           - Show resource usage (CPU, memory, disk)"
+	@echo ""
+	@echo "Authentik SSO:"
+	@echo "  make authentik-logs           - View Authentik server logs"
+	@echo "  make authentik-status         - Check Authentik container status"
+	@echo "  make authentik-restart        - Restart Authentik services"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make validate"
@@ -300,11 +307,46 @@ failover:
 
 check-health:
 	@echo "Checking health of all services..."
-	@ansible all -i inventory/hosts.ini -m shell -a "docker ps --format 'table {{.Names}}\t{{.Status}}'" --ask-vault-pass
+	@echo ""
+	@for host in $$(grep -E "^rpi-" inventory/hosts.ini | awk '{print $$2}' | cut -d'=' -f2); do \
+		echo "=== $$host ==="; \
+		ssh -o ConnectTimeout=5 homelab@$$host "docker ps --format 'table {{.Names}}\t{{.Status}}'" 2>/dev/null || echo "  Could not connect"; \
+		echo ""; \
+	done
+
+check-urls:
+	@if [ -z "$(HOST)" ]; then \
+		if [ -f .active-node ]; then \
+			HOST=$$(cat .active-node | tr -d '[:space:]'); \
+		else \
+			echo "ERROR: Must specify HOST or have .active-node file"; \
+			exit 1; \
+		fi; \
+	fi; \
+	ANSIBLE_HOST=$$(grep "^$$HOST" inventory/hosts.ini | awk '{print $$2}' | cut -d'=' -f2); \
+	echo "Checking service URLs on $$HOST ($$ANSIBLE_HOST)..."; \
+	echo ""; \
+	ssh homelab@$$ANSIBLE_HOST ' \
+		echo "Service              Port    Status"; \
+		echo "-------              ----    ------"; \
+		for svc in "mealie:9925" "wallos:8282" "sterling-pdf:8082" "searxng:8083" "code-server:8443" "open-webui:8084" "audiobookshelf:13378" "n8n:5678" "homarr:7575" "paperless:8000"; do \
+			name=$$(echo $$svc | cut -d: -f1); \
+			port=$$(echo $$svc | cut -d: -f2); \
+			code=$$(curl -4 -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:$$port 2>/dev/null); \
+			if [ "$$code" = "200" ] || [ "$$code" = "302" ] || [ "$$code" = "301" ]; then \
+				status="✓ OK ($$code)"; \
+			elif [ "$$code" = "000" ]; then \
+				status="✗ DOWN"; \
+			else \
+				status="? ($$code)"; \
+			fi; \
+			printf "%-20s %-7s %s\n" "$$name" ":$$port" "$$status"; \
+		done \
+	'
 
 show-resources:
 	@echo "Resource usage on all nodes..."
-	@ansible all -i inventory/hosts.ini -m shell -a "echo '=== CPU & Memory ===' && top -bn1 | head -n 5 && echo '' && echo '=== Disk Usage ===' && df -h /" --ask-vault-pass
+	@ansible rpi_nodes -i inventory/hosts.ini -m shell -a "echo '=== CPU & Memory ===' && top -bn1 | head -n 5 && echo '' && echo '=== Disk Usage ===' && df -h /" --ask-vault-pass
 
 show-logs:
 	@if [ -z "$(HOST)" ]; then \
@@ -389,6 +431,10 @@ pull-images:
 	@ansible all -i inventory/hosts.ini -m shell -a "docker pull postgres:16-alpine" --ask-vault-pass
 	@ansible all -i inventory/hosts.ini -m shell -a "docker pull redis:7-alpine" --ask-vault-pass
 	@echo ""
+	@echo "Pulling Authentik images to RPi nodes..."
+	@ansible rpi_nodes -i inventory/hosts.ini -m shell -a "docker pull postgres:15-alpine" --ask-vault-pass
+	@ansible rpi_nodes -i inventory/hosts.ini -m shell -a "docker pull ghcr.io/goauthentik/server:2024.10" --ask-vault-pass
+	@echo ""
 	@echo "Pulling app images to primary/standby nodes..."
 	@ansible rpi_nodes -i inventory/hosts.ini -m shell -a "docker pull ghcr.io/mealie-recipes/mealie:latest" --ask-vault-pass
 	@ansible rpi_nodes -i inventory/hosts.ini -m shell -a "docker pull bellamy/wallos:latest" --ask-vault-pass
@@ -414,14 +460,63 @@ update-images:
 	@echo "WARNING: This will pull fresh images and restart services"
 	@read -p "Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Cancelled" && exit 1)
 	@echo ""
-	@echo "Updating base stacks..."
-	@ansible rpi_nodes -i inventory/hosts.ini -m shell -a "cd /opt/stacks/base && docker compose pull && docker compose up -d" --ask-vault-pass
-	@echo ""
-	@echo "Updating app stacks on primary node..."
-	@ansible rpi-home -i inventory/hosts.ini -m shell -a "cd /opt/stacks/apps && docker compose pull && docker compose up -d" --ask-vault-pass
+	@if [ -n "$(HOST)" ]; then \
+		echo "Updating base stack on $(HOST)..."; \
+		ansible $(HOST) -i inventory/hosts.ini -m shell -a "cd /opt/stacks/base && docker compose pull && docker compose up -d" --ask-vault-pass; \
+		echo ""; \
+		echo "Updating app stack on $(HOST)..."; \
+		ansible $(HOST) -i inventory/hosts.ini -m shell -a "cd /opt/stacks/apps && docker compose pull && docker compose up -d" --ask-vault-pass; \
+	else \
+		echo "Updating base stacks on all RPi nodes..."; \
+		ansible rpi_nodes -i inventory/hosts.ini -m shell -a "cd /opt/stacks/base && docker compose pull && docker compose up -d" --ask-vault-pass; \
+		echo ""; \
+		echo "Updating app stacks on primary node..."; \
+		ansible rpi-home -i inventory/hosts.ini -m shell -a "cd /opt/stacks/apps && docker compose pull && docker compose up -d" --ask-vault-pass; \
+	fi
 	@echo ""
 	@echo "Updating cloud stack..."
 	@ansible cloud_nodes -i inventory/hosts.ini -m shell -a "cd /opt/stacks/cloud && docker compose pull && docker compose up -d" --ask-vault-pass
 	@echo ""
 	@echo "All services updated and restarted"
+
+# --- Authentik SSO Targets ---
+
+authentik-logs:
+	@if [ -z "$(HOST)" ]; then \
+		if [ -f .active-node ]; then \
+			HOST=$$(cat .active-node | tr -d '[:space:]'); \
+		else \
+			HOST="rpi-home"; \
+		fi; \
+	fi; \
+	echo "Viewing Authentik logs on $$HOST..."; \
+	ANSIBLE_HOST=$$(grep "^$$HOST" inventory/hosts.ini | awk '{print $$2}' | cut -d'=' -f2); \
+	ssh homelab@$$ANSIBLE_HOST "docker logs authentik --tail=100 -f"
+
+authentik-status:
+	@if [ -z "$(HOST)" ]; then \
+		if [ -f .active-node ]; then \
+			HOST=$$(cat .active-node | tr -d '[:space:]'); \
+		else \
+			HOST="rpi-home"; \
+		fi; \
+	fi; \
+	echo "Checking Authentik status on $$HOST..."; \
+	ANSIBLE_HOST=$$(grep "^$$HOST" inventory/hosts.ini | awk '{print $$2}' | cut -d'=' -f2); \
+	echo ""; \
+	echo "=== Authentik Containers ==="; \
+	ssh homelab@$$ANSIBLE_HOST "docker ps --filter 'name=authentik' --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
+
+authentik-restart:
+	@if [ -z "$(HOST)" ]; then \
+		if [ -f .active-node ]; then \
+			HOST=$$(cat .active-node | tr -d '[:space:]'); \
+		else \
+			HOST="rpi-home"; \
+		fi; \
+	fi; \
+	echo "Restarting Authentik services on $$HOST..."; \
+	ANSIBLE_HOST=$$(grep "^$$HOST" inventory/hosts.ini | awk '{print $$2}' | cut -d'=' -f2); \
+	ssh homelab@$$ANSIBLE_HOST "docker restart authentik authentik-worker authentik-db authentik-redis"; \
+	echo "Authentik services restarted"
 

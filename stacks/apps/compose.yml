@@ -154,7 +154,7 @@ services:
       - "traefik.http.services.books.loadbalancer.server.port=80"
 
   n8n:
-    image: n8nio/n8n:1.117.1-arm64
+    image: n8nio/n8n:latest
     container_name: n8n
     user: "0:0"
     environment:

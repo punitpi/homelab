@@ -1,922 +1,1307 @@
-# Homelab Infrastructure Plan
+# Homelab Infrastructure
 
-This repository contains the infrastructure-as-code for a personal homelab. It uses Docker, Ansible, and shell scripts to create a reproducible, resilient, and automated environment.
+> Infrastructure-as-code for running self-hosted applications on Raspberry Pi with automated backups and disaster recovery
 
-## Core Concepts
+## Table of Contents
 
-- **Local-First Approach**: Core services run on low-power Raspberry Pi devices on your local network. A cloud VM is used only for edge services (proxy, SSO, monitoring) to keep costs low.
-- **Automation with Ansible**: Ansible is used for configuration management and application deployment. This ensures all nodes are configured identically and makes deployments repeatable and idempotent.
-- **Containerization with Docker**: All services run in Docker containers, managed by Docker Compose. This isolates applications and makes them portable.
-- **Secure Networking with Tailscale**: Tailscale creates a secure overlay network (a WireGuard mesh) connecting all your devices, whether they are at home or in the cloud. This allows services to communicate securely without exposing them directly to the internet.
-
-> **💡 Quick Start**: New to this setup? Jump to [Section 1.5: Make Commands Reference](#15-make-commands-reference) for a complete list of deployment and management commands, or see [QUICKSTART.md](QUICKSTART.md) for a 5-minute setup guide.
-
----
-
-## 0. Architecture Diagram & Placement
-
-### Architecture Diagram (Local-First)
-
-```ascii
-                               +-------------------------+
-                               |      Cloud (Linode)     |
-                               |-------------------------|
-                               |  - Traefik (Edge Proxy) |
-                               |  - Authentik (SSO)      |
-                               |  - Uptime-Kuma (Monitor)|
-                               +-----------|-------------+
-                                           | (Tailscale)
-+------------------------------------------|-------------------------------------------+
-|                                                                                      |
-|  (Tailscale Overlay Network)                                                         |
-|                                                                                      |
-+------------|-------------------------|-----------------------------|-----------------+
-             |                         |                             |
-  +----------|---------+-+  +----------|---------+-+   +-------------|---------------+
-  | RPi-Home (Primary)   |  | RPi-Friend (DR-Lite) |   | India Box (Backups)         |
-  |----------------------|  |----------------------|   |-----------------------------|
-  | - Base Services      |  | - Base Services      |   | - Restic/Rclone Target (Opt)|
-  | - App Services       |  | (Apps disabled)      |   +-----------------------------+
-  +----------------------+  +----------------------+
-
-
-```
-
-```
-
-```
-
-### Service Placement Table
-
-| Service            | Location             | Database           | Port (Local)      | Exposure Path           |
-| :----------------- | :------------------- | :----------------- | :---------------- | :---------------------- |
-| **Cloud Services** |                      |                    |                   |                         |
-| Traefik            | Cloud VM             | -                  | 80, 443           | Public Internet         |
-| Authentik          | Cloud VM             | Embedded Postgres  | 9000, 9443        | Traefik (`auth.DOMAIN`) |
-| Uptime-Kuma        | Cloud VM             | Embedded           | 3001              | Traefik (`kuma.DOMAIN`) |
-| **Base Services**  |                      |                    |                   |                         |
-| Tailscale          | All Nodes            | -                  | Host Network      | Tailscale Network       |
-| AdGuard Home       | RPi-Home, RPi-Friend | -                  | 53, 3000          | LAN (via Tailscale DNS) |
-| Kuma Agent         | RPi-Home, RPi-Friend | -                  | -                 | Push to Cloud Kuma      |
-| Postgres           | RPi-Home, RPi-Friend | Self               | `127.0.0.1:5432`  | Localhost Only          |
-| Redis              | RPi-Home, RPi-Friend | Self               | `127.0.0.1:6379`  | Localhost Only          |
-| Backups (restic)   | All Nodes            | -                  | -                 | Cron / SSH              |
-| **App Services**   |                      |                    |                   |                         |
-| FreshRSS           | RPi-Home             | Postgres           | `127.0.0.1:8081`  | Traefik via Tailscale   |
-| Mealie             | RPi-Home             | Postgres           | `127.0.0.1:9925`  | Traefik via Tailscale   |
-| Wallos             | RPi-Home             | MariaDB (if added) | `127.0.0.1:8282`  | Traefik via Tailscale   |
-| SterlingPDF        | RPi-Home             | -                  | `127.0.0.1:8082`  | Traefik via Tailscale   |
-| SearXNG            | RPi-Home             | Redis              | `127.0.0.1:8083`  | Traefik via Tailscale   |
-| VS Code Server     | RPi-Home             | -                  | `127.0.0.1:8443`  | Traefik via Tailscale   |
-| OpenWebUI          | RPi-Home             | -                  | `127.0.0.1:8084`  | Traefik via Tailscale   |
-| Audiobookshelf     | RPi-Home             | -                  | `127.0.0.1:13378` | Traefik via Tailscale   |
+1. [Overview](#1-overview)
+2. [Quick Start](#2-quick-start)
+3. [Prerequisites](#3-prerequisites)
+4. [Setup Guide](#4-setup-guide)
+5. [Operations](#5-operations)
+6. [Architecture](#6-architecture)
+7. [Repository Structure](#7-repository-structure)
+8. [Additional Documentation](#8-additional-documentation)
+9. [Troubleshooting](#9-troubleshooting)
 
 ---
 
-## 1. Environment Setup
+## 1. Overview
 
-This section covers how to set up the physical and virtual nodes for your homelab.
+### What This Does
 
-### Prerequisites
+This homelab setup provides:
 
-- **Management Machine**: A computer with `ansible`, `ssh`, and `git` installed.
-- **Tailscale Account**: A free Tailscale account.
-- **Cloud Provider Account**: A Linode account (or any other cloud provider).
-- **Backblaze B2 Account**: For offsite backups.
-- **Raspberry Pis**: Two Raspberry Pi 5s with SSDs.
+- Self-hosted applications (RSS reader, recipe manager, PDF tools, code server, etc.)
+- Automated daily backups to cloud storage (Backblaze B2)
+- Disaster recovery with one-command restoration
+- High availability with standby node promotion
+- Secure networking via Tailscale VPN mesh
+- Infrastructure as code - reproducible, version-controlled setup
 
-### Node Bootstrap (for RPis and other Linux boxes)
+### Core Principles
 
-This process prepares a fresh Debian-based system (like Raspberry Pi OS or Debian/Ubuntu on the India Box/Cloud VM) to be managed by our Ansible setup.
+- **Local-First**: Core services run on low-power Raspberry Pis at home
+- **Automation**: Ansible manages all deployments and configurations
+- **Containerization**: Everything runs in Docker for portability
+- **Security**: Tailscale mesh network, no exposed ports to internet
+- **Resilience**: Automated backups, standby nodes, easy recovery
 
-1. **Install OS**: Flash a fresh copy of Raspberry Pi OS Lite (64-bit) or Debian/Ubuntu onto your device's SSD/disk.
-2. **Initial Login**: Log in to the device (e.g., via SSH with the default user or direct console access).
-3. **Copy Bootstrap Script**: Copy the `scripts/bootstrap.sh` script from this repository to the device. You can use `scp`:
+### Service Architecture
 
-   ```bash
-   scp scripts/bootstrap.sh default_user@<device_ip>:/tmp/bootstrap.sh
-   ```
+```
+                    Internet
+                       │
+                       │ (Public HTTPS)
+                       ↓
+              ┌────────────────┐
+              │   Cloud VM     │  ← Edge proxy & monitoring
+              │  (Linode/DO)   │
+              │                │
+              │  - Traefik     │  ← Reverse proxy
+              │  - Uptime Kuma │  ← Monitoring
+              │  - AdGuard     │  ← DNS/Ad blocking
+              └────────┬───────┘
+                       │
+                       │ (Tailscale VPN Mesh)
+                       ↓
+         ┌─────────────┴──────────────┬─────────────┐
+         │                            │             │
+    ┌────┴─────┐                 ┌───┴──────┐  ┌───┴────────┐
+    │ RPi-Home │                 │RPi-Friend│  │ India-Box  │
+    │(Primary) │                 │(Standby) │  │ (Backups)  │
+    │          │                 │          │  │ (Optional) │
+    │ Apps+DBs │                 │DBs Only  │  │            │
+    └──────────┘                 └──────────┘  └────────────┘
+```
 
-4. **Run the Script**: SSH into the device and run the script as root.
+**4-Node Architecture:**
 
-   ```bash
-   ssh default_user@<device_ip>
-   sudo bash /tmp/bootstrap.sh
-   ```
+- **Cloud VM**: Edge proxy for public internet access (Traefik + Uptime Kuma)
+- **RPi-Home**: Primary node running all applications
+- **RPi-Friend**: Standby node (ready for promotion)
+- **India-Box**: Optional backup target
 
-   The script will:- Create a new `homelab` user for Ansible to use.
-
-   - Harden SSH by disabling root login and password authentication.
-   - Install essential software: Docker, Docker Compose, UFW (firewall), Fail2ban, and unattended security upgrades.
-   - Install Tailscale.
-
-5. **Reboot**: After the script finishes, reboot the node: `sudo reboot`.
-6. **Join Tailscale Network**: After rebooting, log back in and run the `tailscale up` command printed by the script. You will need to generate an auth key from your Tailscale Admin Console (Settings -> Auth keys).
-
-   ```bash
-   # Example command shown by the script
-   sudo tailscale up --ssh --accept-routes --accept-dns --authkey=tskey-auth-YOUR_KEY...
-   ```
-
-   **IMPORTANT**: Enable the `--ssh` flag. This allows Tailscale to manage SSH connections, so you can connect to your nodes using their Tailscale IP without worrying about local network changes.
-
-7. **Authorize Node**: In the Tailscale admin console, authorize the new node. You may also want to disable key expiry for server-like devices.
-
-Repeat this process for `RPi-Home`, `RPi-Friend`, and the `India Box`.
-
-### SSH Access
-
-Once a node is on the Tailscale network and has the `--ssh` flag enabled, you can connect to it from any other device in your Tailnet (like your management machine).
-
-- **Find the Tailscale IP**: In the Tailscale admin console, find the IP address of the node you want to connect to (e.g., `100.X.X.X`).
-- **SSH as `homelab` user**:
-
-  ```bash
-  ssh homelab@<tailscale_ip>
-  ```
-
-  This works because your management machine's SSH key (`~/.ssh/id_rsa.pub` or similar) was copied to the `homelab` user during the bootstrap process.
-
-### Cloud VM (Linode) Setup
-
-The cloud VM runs the "edge" services.
-
-1. **Create VM**: In Linode, create a "Nanode" (1 GB RAM) instance running Ubuntu 22.04.
-2. **Add SSH Key**: Add your public SSH key to the Linode instance during creation so you can log in as `root`.
-3. **Bootstrap**: SSH into the new VM as `root` and follow the same **Node Bootstrap** process above.
-4. **Deploy Edge Services**: The cloud services (Traefik, Authentik, Uptime-Kuma) are managed separately. You can copy the example `docker-compose.yml` from the "Cloud Edge Example" section of the old README, place it in `/root/cloud-edge/`, and run `docker compose up -d`.
+**All nodes connect via Tailscale VPN** - services never exposed directly to internet.
 
 ---
 
-## 1.5. Make Commands Reference
+## 2. Quick Start
 
-This repository includes a `Makefile` that provides convenient shortcuts for all common operations. Here's a complete reference of all available commands:
+**Total Time: Approximately 30 minutes for complete setup**
 
-### 🔍 **Validation & Setup**
+```bash
+# 1. Clone this repository
+git clone <your-repo-url> homelab && cd homelab
+
+# 2. Set up secrets
+cp env/secrets.example.env env/secrets.env
+nano env/secrets.env  # Add your actual credentials
+
+# 3. Update inventory with your node IPs
+nano inventory/hosts.ini
+
+# 4. Validate setup
+make validate
+
+# 5. Pre-pull Docker images (avoids rate limits)
+make pull-images                   # Pull all images (~10 min)
+
+# 6. Deploy everything
+make deploy-base                   # Deploy to all nodes (~5 min)
+make deploy-apps target=rpi-home   # Deploy apps (~3 min)
+make deploy-backup-automation      # Setup backups (~1 min)
+
+# 7. Test backup system
+make backup-now HOST=rpi-home      # Run first backup
+make restore-test HOST=rpi-friend  # Test restoration
+```
+
+ **Done!** Your homelab is now running with automated backups.
+
+See [QUICKSTART.md](QUICKSTART.md) for detailed quick start guide.
+
+---
+
+## 3. Prerequisites
+
+### Required Hardware
+
+| Device             | Purpose                  | Specs                 | Quantity |
+| ------------------ | ------------------------ | --------------------- | -------- |
+| Raspberry Pi 5     | Primary application host | 8GB RAM, external SSD | 1        |
+| Raspberry Pi 5     | Standby/DR host          | 8GB RAM, external SSD | 1        |
+| Cloud VPS          | Edge proxy & monitoring  | 1-2GB RAM, 1 CPU      | 1        |
+| Linux Box/VPS      | Backup target (optional) | Any specs             | 0-1      |
+| Management Machine | To run Ansible           | Linux/macOS with SSH  | 1        |
+
+### Required Accounts
+
+- ️ **Tailscale** (free tier) - For secure VPN mesh
+-  **Backblaze B2** (free 10GB) - For backup storage
+-  **Cloud Provider** (Linode/DigitalOcean/Vultr) - For edge proxy VM (~$5-10/month)
+- 📧 **Domain name** - For public access to services (e.g., yourdomain.com)
+
+### Required Software (Management Machine)
+
+```bash
+# macOS
+brew install ansible git
+
+# Ubuntu/Debian
+sudo apt update && sudo apt install -y ansible git python3-pip
+
+# Verify installation
+ansible --version
+git --version
+```
+
+### Required Knowledge
+
+-  Basic Linux command line
+-  SSH key authentication
+-  Basic understanding of Docker (optional but helpful)
+-  No programming experience required
+-  No deep networking knowledge needed
+
+---
+
+## 4. Setup Guide
+
+Follow these steps **in order** for a successful deployment.
+
+### Step 1: Prepare Your Nodes
+
+#### 1.1 Hardware Setup
+
+1. **Flash Raspberry Pi OS Lite (64-bit)** to both RPis
+
+   ```bash
+   # Use Raspberry Pi Imager
+   # Enable SSH in advanced options
+   # Set hostname: rpi-home, rpi-friend
+   ```
+
+2. **Boot nodes** and connect them to your network
+3. **Find their IP addresses**
+
+   ```bash
+   # Check your router's DHCP leases or use:
+   nmap -sn 192.168.1.0/24 | grep -B 2 "Raspberry Pi"
+   ```
+
+#### 1.2 SSH Key Setup (FROM YOUR MANAGEMENT MACHINE)
+
+This is **critical** - you must have SSH key access before proceeding!
+
+```bash
+# Generate SSH key if you don't have one
+ssh-keygen -t ed25519 -C "homelab-key"
+# Accept default location: ~/.ssh/id_ed25519
+# Set a passphrase (recommended)
+
+# Start SSH agent
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+
+# Copy SSH key to all nodes (use default user)
+ssh-copy-id pi@<rpi-home-ip>       # For Raspberry Pi OS
+ssh-copy-id pi@<rpi-friend-ip>
+# Optional: ssh-copy-id user@<india-box-ip>  # If you have backup node
+
+# Test SSH access (should work without password)
+ssh pi@<rpi-home-ip> "echo 'SSH working!'"
+ssh pi@<rpi-friend-ip> "echo 'SSH working!'"
+```
+
+**Troubleshooting:**
+
+- If ssh-copy-id fails: `ssh-add -l` to verify key is loaded
+- If permission denied: Check if password auth is enabled on target
+- See [docs/SSH-SETUP.md](docs/SSH-SETUP.md) for detailed guide
+
+#### 1.3 Run Bootstrap Script on Each Node
+
+The bootstrap script prepares nodes for Ansible management.
+
+```bash
+# Copy bootstrap script to first node
+scp scripts/bootstrap.sh pi@<rpi-home-ip>:/tmp/
+
+# SSH in and run bootstrap
+ssh pi@<rpi-home-ip>
+sudo bash /tmp/bootstrap.sh Europe/Vienna pi
+# Timezone: Europe/Vienna (or your timezone)
+# Source user: pi (the current user with SSH keys)
+
+# Repeat for second node
+scp scripts/bootstrap.sh pi@<rpi-friend-ip>:/tmp/
+ssh pi@<rpi-friend-ip>
+sudo bash /tmp/bootstrap.sh Europe/Vienna pi
+
+# Repeat for Cloud VM
+scp scripts/bootstrap.sh root@<cloud-vm-ip>:/tmp/
+ssh root@<cloud-vm-ip>
+sudo bash /tmp/bootstrap.sh Europe/Vienna root
+
+# Optional: Repeat for india-box if you have it
+# scp scripts/bootstrap.sh user@<india-box-ip>:/tmp/
+# ssh user@<india-box-ip>
+# sudo bash /tmp/bootstrap.sh Europe/Vienna user
+```
+
+**What bootstrap does:**
+
+-  Creates `homelab` user with sudo access
+-  Copies SSH keys from source user to homelab user
+-  Installs Docker & Docker Compose
+-  Installs Tailscale
+-  Configures firewall (UFW)
+-  Hardens SSH (disables root login, password auth)
+
+**️ Important:** After bootstrap, you MUST use `homelab` user:
+
+```bash
+ssh homelab@<rpi-home-ip>     #  Correct
+ssh pi@<rpi-home-ip>          #  Won't work (disabled)
+ssh root@<cloud-vm-ip>        #  Won't work (disabled)
+```
+
+#### 1.4 Join Tailscale Network
+
+On **each node**, join your Tailscale network:
+
+```bash
+# SSH into node as homelab user
+ssh homelab@<node-ip>
+
+# Get auth key from Tailscale admin console:
+# https://login.tailscale.com/admin/settings/keys
+
+# Join Tailscale network
+sudo tailscale up --ssh --accept-routes --accept-dns --authkey=tskey-auth-XXXXX
+
+# Get your Tailscale IP
+tailscale ip -4
+# Example output: 100.101.102.103
+```
+
+**Record these Tailscale IPs** - you'll need them for inventory setup!
+
+Optional: In Tailscale admin console, disable key expiry for server nodes.
+
+### Step 2: Configure Your Repository
+
+Back on your **management machine**:
+
+#### 2.1 Clone Repository
+
+```bash
+git clone <your-repo-url> homelab
+cd homelab
+```
+
+#### 2.2 Set Up Secrets
+
+```bash
+# Copy the example file
+cp env/secrets.example.env env/secrets.env
+
+# Edit with your actual credentials
+nano env/secrets.env
+```
+
+**Required secrets:**
+
+```bash
+# Tailscale (from https://login.tailscale.com/admin/settings/keys)
+TAILSCALE_AUTH_KEY=tskey-auth-XXXXX
+
+# Domain & DNS
+DOMAIN=yourdomain.com
+CF_DNS_API_TOKEN=your-cloudflare-token
+
+# Backblaze B2 (from Backblaze console - used by rclone for backups)
+B2_KEY_ID=your-key-id
+B2_APP_KEY=your-app-key
+B2_BUCKET=your-bucket-name
+
+# Database passwords (generate strong passwords)
+PG_PASSWORD=postgres-password
+MEALIE_DB_PASSWORD=mealie-password
+PAPERLESS_DB_PASSWORD=paperless-password
+
+# Admin passwords
+CODE_PASSWORD=code-server-password
+MEALIE_DEFAULT_PASSWORD=admin-password
+```
+
+**Security tips:**
+
+- Use a password manager to generate strong passwords
+- Never commit `secrets.env` to git (it's in .gitignore)
+- Store a backup copy in your password manager
+
+#### 2.3 Update Inventory
+
+```bash
+nano inventory/hosts.ini
+```
+
+Replace the placeholder IPs with your **Tailscale IPs** from Step 1.4:
+
+```ini
+[rpi_nodes]
+rpi-home ansible_host=100.101.102.103
+rpi-friend ansible_host=100.101.102.104
+
+[cloud_nodes]
+cloud-vm ansible_host=100.101.102.105
+
+[backup_nodes]
+india-box ansible_host=100.101.102.106  # Optional
+
+[primary]
+rpi-home
+
+[all:vars]
+ansible_user=homelab
+ansible_ssh_private_key_file=~/.ssh/id_ed25519
+```
+
+**Note:** India-box is optional. Cloud VM is required for public access.
+
+**Verify Ansible can connect:**
+
+```bash
+ansible all -i inventory/hosts.ini -m ping
+```
+
+Expected output: All nodes return `pong` with `"changed": false`
+
+#### 2.4 Configure Sudo Passwords (Required for Ansible)
+
+Since Ansible needs sudo access to manage your nodes, you need to configure encrypted sudo passwords. This setup allows different passwords for different node groups (rpi_nodes vs cloud_nodes).
+
+**Step 1: Encrypt RPi Nodes Sudo Password**
+
+```bash
+# Generate encrypted password for rpi_nodes
+echo 'ansible_sudo_pass: YOUR_RPI_SUDO_PASSWORD' | ansible-vault encrypt_string --stdin-name 'ansible_sudo_pass'
+```
+
+**Step 2: Add to rpi_nodes.yml**
+
+Copy the encrypted output and add it to `inventory/group_vars/rpi_nodes.yml`:
+
+```yaml
+# Ansible Authentication
+ansible_sudo_pass: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  [YOUR_ENCRYPTED_PASSWORD_OUTPUT]
+```
+
+**Step 3: Encrypt Cloud Nodes Sudo Password**
+
+```bash
+# Generate encrypted password for cloud_nodes
+echo 'ansible_sudo_pass: YOUR_CLOUD_SUDO_PASSWORD' | ansible-vault encrypt_string --stdin-name 'ansible_sudo_pass'
+```
+
+**Step 4: Add to cloud_nodes.yml**
+
+Add the encrypted output to `inventory/group_vars/cloud_nodes.yml`:
+
+```yaml
+# Ansible Authentication
+ansible_sudo_pass: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  [YOUR_ENCRYPTED_PASSWORD_OUTPUT]
+```
+
+**Step 5: Test Configuration**
+
+```bash
+# Test RPi nodes
+ansible rpi_nodes -i inventory/hosts.ini -m shell -a "sudo whoami" --ask-vault-pass
+
+# Test Cloud nodes
+ansible cloud_nodes -i inventory/hosts.ini -m shell -a "sudo whoami" --ask-vault-pass
+```
+
+**Security Notes:**
+
+-  Passwords are encrypted using Ansible Vault
+-  Different passwords for different node groups
+-  Vault password protects all encrypted secrets
+- ️ Remember your vault password - you'll need it for all deployments
+-  Store vault password in your password manager
+
+### Step 3: Validate Setup
+
+Before deploying, validate everything is configured correctly:
 
 ```bash
 make validate
 ```
 
-**Purpose**: Validates your homelab setup before deployment
+This checks:
 
-- Checks all required files exist (configs, compose files, inventory)
-- Verifies all required secrets are defined in `env/secrets.env`
-- Validates Docker Compose syntax (if Docker is available)
-- Validates Ansible playbook syntax
-- **When to use**: Run this first before any deployment to catch configuration errors
+-  All required files exist
+-  All secrets are defined (no placeholders)
+-  Docker Compose syntax is valid
+-  Ansible playbook syntax is valid
+-  Inventory is accessible
 
-### 🚀 **Deployment Commands**
+**Fix any errors before proceeding!**
+
+### Step 4: Pre-Pull Docker Images (Recommended)
+
+Before deployment, pre-pull all Docker images to avoid hitting Docker Hub rate limits:
+
+```bash
+make pull-images
+```
+
+**Why this matters:**
+- Docker Hub has rate limits (100 pulls per 6 hours for anonymous users)
+- This command pulls all images once to all nodes
+- Future deployments use cached images (no rate limit issues)
+- Takes ~5-10 minutes depending on your internet speed
+
+**What it does:**
+- Pulls base images (PostgreSQL, Redis) to all nodes
+- Pulls app images (Mealie, Wallos, etc.) to RPi nodes
+- Pulls cloud images (Traefik, Authentik, etc.) to cloud VM
+- All images are cached locally on each node
+
+**Note:** This step is optional but **highly recommended** for smooth deployments.
+
+### Step 5: Deploy Infrastructure
+
+Now deploy everything using Ansible (via Make commands):
+
+#### 5.1 Deploy Base Services (All Nodes)
 
 ```bash
 make deploy-base
 ```
 
-**Purpose**: Deploy core infrastructure to all nodes
+**What this deploys:**
 
-- Installs base services: Tailscale, AdGuard, PostgreSQL, Redis
-- Sets up networking and security
-- Configures shared databases
-- **Target**: All nodes in inventory (`rpi-home`, `rpi-friend`, `india-box`)
-- **Safe to re-run**: Yes (idempotent)
+- PostgreSQL database
+- Redis cache
+
+**Time:** ~2-5 minutes
+**Target:** All nodes (rpi-home, rpi-friend, and optionally india-box)
+
+**Note:** Tailscale runs as a system service (already installed by bootstrap script).
+
+#### 5.2 Deploy Applications (Primary Node Only)
 
 ```bash
 make deploy-apps target=rpi-home
 ```
 
-**Purpose**: Deploy application stack to a specific node
+**What this deploys:**
 
-- Installs applications: FreshRSS, Mealie, Wallos, VS Code Server, etc.
-- **Required parameter**: `target=<hostname>` (e.g., `rpi-home`, `rpi-friend`)
-- **When to use**: After `deploy-base`, only on nodes where you want apps running
-- **Example**: `make deploy-apps target=rpi-home`
+- Mealie (recipe manager)
+- Wallos (subscription tracker)
+- Sterling PDF (PDF tools)
+- SearXNG (search engine)
+- VS Code Server
+- Open WebUI (AI interface)
+- Audiobookshelf (audiobook/podcast server)
+- n8n (workflow automation)
+- Homarr (dashboard)
+- Paperless-ngx (document management)
+
+**Time:** ~3-5 minutes
+**Target:** Only rpi-home (primary node)
+
+**Note:** rpi-friend (standby node) does NOT run apps by default. See [High Availability](#high-availability) for promotion.
+
+#### 5.3 Deploy Backup Automation
 
 ```bash
 make deploy-backup-automation
 ```
 
-**Purpose**: Set up automated backup cron jobs on all nodes
+**What this sets up:**
 
-- Installs backup scripts (`backup_now.sh`, `restore_latest.sh`)
-- Configures daily cron jobs for automated backups
-- Sets up Restic repositories and Rclone for cloud storage
-- **Target**: All nodes
-- **Schedule**: Runs at different times per node to avoid conflicts
+- Installs backup scripts to all nodes
+- Configures daily cron jobs (different times per node)
+- Tests Rclone connection to B2
+- Configures encrypted backups with rclone crypt
 
-### 💾 **Backup & Recovery Commands**
+**Time:** ~1-2 minutes
+**Target:** All nodes
+
+#### 5.4 Deploy Rclone Cloud Mounts (Optional)
 
 ```bash
+make deploy-rclone-mount
+```
+
+**What this sets up:**
+
+- Mounts cloud storage (audiobooks, etc.) to `/mnt/audiobooks`
+- Creates systemd service for auto-mount on boot
+- Configures 50GB cache with 10-day retention for smooth streaming
+- Enables audiobookshelf to access cloud audiobooks without downloading
+
+**Time:** ~1 minute
+**Target:** RPi nodes
+
+**Configuration:**
+- Edit `env/rclone-mounts.env` to add more mounts (podcasts, ebooks, etc.)
+- Mount path: `b2-crypt:data/media/audiobooks` → `/mnt/audiobooks`
+
+**Note:** This is optional - only needed if you want to stream media from cloud storage.
+
+### Step 6: Verify Deployment
+
+#### 6.1 Check Services are Running
+
+```bash
+# SSH into primary node
+ssh homelab@rpi-home
+
+# Check all containers are running
+docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# Should see 15-20 containers in "Up" state
+```
+
+#### 6.2 Service URLs
+
+All services can be accessed two ways:
+
+**Via Domain Names (Traefik HTTPS):**
+
+| Service        | URL                          | Description                    |
+| -------------- | ---------------------------- | ------------------------------ |
+| Authentik      | `https://auth.igh.one`       | SSO/Authentication (login)     |
+| Mealie         | `https://mealie.igh.one`     | Recipe manager                 |
+| Wallos         | `https://wallos.igh.one`     | Subscription tracker           |
+| Sterling PDF   | `https://pdf.igh.one`        | PDF tools                      |
+| SearXNG        | `https://search.igh.one`     | Private search engine          |
+| Code Server    | `https://code.igh.one`       | VS Code in browser             |
+| Open WebUI     | `https://chat.igh.one`       | AI chat interface              |
+| Audiobookshelf | `https://books.igh.one`      | Audiobook/podcast server       |
+| n8n            | `https://n8n.igh.one`        | Workflow automation            |
+| Homarr         | `https://dashboard.igh.one`  | Dashboard                      |
+| Paperless-ngx  | `https://paperless.igh.one`  | Document management            |
+| Traefik        | `https://traefik.igh.one`    | Reverse proxy dashboard        |
+
+**Via Direct Ports (Tailscale IP):**
+
+```bash
+# Get rpi-home's Tailscale IP
+ssh homelab@rpi-home tailscale ip -4
+# Example: 100.101.102.103
+
+# Access via IP:port
+http://<tailscale-ip>:9925   # Mealie
+http://<tailscale-ip>:8282   # Wallos
+http://<tailscale-ip>:8082   # Sterling PDF
+http://<tailscale-ip>:8083   # SearXNG
+http://<tailscale-ip>:8443   # Code Server
+http://<tailscale-ip>:8084   # Open WebUI
+http://<tailscale-ip>:13378  # Audiobookshelf
+http://<tailscale-ip>:5678   # n8n
+http://<tailscale-ip>:7575   # Homarr
+http://<tailscale-ip>:8000   # Paperless-ngx
+```
+
+**Check Service Health:**
+
+```bash
+make check-health   # Check container status on all nodes
+make check-urls     # Check if all service URLs are responding
+```
+
+#### 6.3 Verify Backup System
+
+```bash
+# Run first backup manually
 make backup-now HOST=rpi-home
-```
 
-**Purpose**: Trigger an immediate backup on a specific host
+# Check backup succeeded (look for "snapshot saved")
+# Backup should take 2-10 minutes depending on data size
 
-- Dumps databases, backs up Docker volumes and configurations
-- Uploads encrypted backup to Backblaze B2 (and optionally Linode)
-- **Required parameter**: `HOST=<hostname>`
-- **Example**: `make backup-now HOST=rpi-home`
-- **Duration**: ~5-15 minutes depending on data size
-
-```bash
-make restore-latest HOST=rpi-friend
-```
-
-**Purpose**: **🚨 DESTRUCTIVE** - Restore latest backup to a host
-
-- **Stops all containers** and restores data from most recent backup
-- Restores databases, Docker volumes, and configurations
-- **Use cases**: Disaster recovery, migrating data between nodes
-- **⚠️ Warning**: This will overwrite all existing data on the target host
-- **Required parameter**: `HOST=<hostname>`
-
-```bash
+# Test restoration (non-destructive)
 make restore-test HOST=rpi-friend
+
+# Verify test restore
+ssh homelab@rpi-friend
+ls -lh /tmp/rclone_restore_test/
+# Should see backed up data here
 ```
 
-**Purpose**: **NON-DESTRUCTIVE** - Test restore to temporary directory
+**🎉 Congratulations! Your homelab is fully operational!**
 
-- Downloads and extracts latest backup to `/tmp/restic_restore_test/`
-- Does NOT affect running services or existing data
-- **Use for**: Verifying backup integrity before actual restore
-- **Required parameter**: `HOST=<hostname>`
-- **Cleanup**: Remove `/tmp/restic_restore_test/` when done
+---
 
-### ⚡ **High Availability Commands**
+## 5. Operations
+
+Daily operations and maintenance tasks.
+
+### Available Commands
+
+All operations use `make` commands. Run `make help` to see all options.
+
+**🔐 Important:** All deployment commands will prompt for your **Ansible Vault password** to decrypt sudo credentials. This is the password you set when configuring encrypted sudo passwords in Section 2.4.
+
+| Command                         | Purpose                              | Example                             |
+| ------------------------------- | ------------------------------------ | ----------------------------------- |
+| `make validate`                 | Validate configuration               | `make validate`                     |
+| `make deploy-base`              | Deploy base services                 | `make deploy-base`                  |
+| `make deploy-apps`              | Deploy applications                  | `make deploy-apps target=rpi-home`  |
+| `make deploy-backup-automation` | Setup automated backups              | `make deploy-backup-automation`     |
+| `make backup-now`               | Run manual backup                    | `make backup-now HOST=rpi-home`     |
+| `make restore-test`             | Test backup restore                  | `make restore-test HOST=rpi-friend` |
+| `make restore-latest`           | Restore from backup (️ destructive) | `make restore-latest HOST=rpi-home` |
+| `make failover`                 | Promote standby to primary           | `make failover`                     |
+| `make pull-images`              | Pre-pull all Docker images           | `make pull-images`                  |
+| `make update-images`            | Update images and restart services   | `make update-images`                |
+
+### Common Operations
+
+#### Running Manual Backups
 
 ```bash
-make promote-friend
+# Backup specific host
+make backup-now HOST=rpi-home
+make backup-now HOST=rpi-friend
+
+# Backups are encrypted and uploaded to B2
+# Check B2 console to verify uploads
 ```
 
-**Purpose**: Promote `rpi-friend` from standby to primary app host
+#### Testing Backup Integrity
 
-- Enables applications on `rpi-friend`
-- **Use cases**:
-  - When `rpi-home` is offline/broken
-  - During planned maintenance
-  - When shipping `rpi-home` to Austria
-- **Note**: You may want to disable apps on `rpi-home` first to avoid conflicts
-
-### 🔧 **Alternative: Direct SSH Commands**
-
-If you prefer running commands directly via SSH instead of using `make`:
+**⚡ Do this monthly!**
 
 ```bash
-# Deploy base services manually
-ansible-playbook -i inventory/hosts.ini ansible/site.yml --tags "base"
+# Non-destructive test - downloads and extracts to /tmp
+make restore-test HOST=rpi-friend
 
-# Deploy apps to specific host
-ansible-playbook -i inventory/hosts.ini ansible/site.yml --tags "apps" --limit rpi-home
+# Verify the restore
+ssh homelab@rpi-friend
+ls -lh /tmp/restic_restore_test/docker_volumes/
+ls -lh /tmp/restic_restore_test/databases/
 
-# Manual backup on specific host
-ssh homelab@<host-ip> "cd /opt/homelab && ./scripts/backup_now.sh"
-
-# Manual restore test
-ssh homelab@<host-ip> "cd /opt/homelab && ./scripts/restore_latest.sh --dry-run"
+# Clean up test data
+rm -rf /tmp/restic_restore_test/
 ```
 
-### 📋 **Command Cheat Sheet**
-
-| Task                      | Command                                                                 | Notes                          |
-| ------------------------- | ----------------------------------------------------------------------- | ------------------------------ |
-| **First-time setup**      | `make validate && make deploy-base && make deploy-apps target=rpi-home` | Complete initial deployment    |
-| **Add backup automation** | `make deploy-backup-automation`                                         | Set up automated daily backups |
-| **Manual backup**         | `make backup-now HOST=rpi-home`                                         | Immediate backup               |
-| **Test restore**          | `make restore-test HOST=rpi-friend`                                     | Non-destructive backup test    |
-| **Failover**              | `make promote-friend`                                                   | Switch to standby node         |
-| **Disaster recovery**     | `make restore-latest HOST=rpi-home`                                     | ⚠️ Destructive restore         |
-| **Check setup**           | `make validate`                                                         | Pre-flight validation          |
-
-### 🎯 **Common Workflows**
-
-**Initial Setup (Austria):**
+#### Updating Applications
 
 ```bash
-make validate
+# Option 1: Update all images and services at once (recommended)
+make update-images
+
+# Option 2: Update specific stack manually
+ssh homelab@rpi-home
+cd /opt/stacks/apps
+docker compose pull
+docker compose up -d
+
+# Option 3: Redeploy via Ansible (uses cached images)
+make deploy-apps target=rpi-home
+```
+
+**Note:** `make update-images` will:
+- Pull fresh images from registries
+- Restart all services with new images
+- Work across all nodes (base, apps, cloud stacks)
+- Prompt for confirmation before proceeding
+
+#### Viewing Logs
+
+```bash
+ssh homelab@rpi-home
+
+# View logs for specific service
+docker logs freshrss
+docker logs mealie
+
+# Follow logs in real-time
+docker logs -f freshrss
+
+# View logs for all services
+cd /opt/stacks/apps
+docker compose logs -f
+```
+
+#### Checking Disk Space
+
+```bash
+ssh homelab@rpi-home
+
+# Check disk usage
+df -h
+
+# Check Docker disk usage
+docker system df
+
+# Clean up unused Docker resources
+docker system prune -a
+```
+
+### High Availability
+
+The homelab supports **automatic failover** between nodes with a single command. Active node tracking is maintained in `.active-node` file locally.
+
+#### Smart Failover System
+
+The system automatically determines which node is active and switches to the other:
+
+**Full Production Failover** (with data restore and shutdown):
+```bash
+make failover
+```
+- Restores latest backup from active node to standby
+- Deploys base + apps on new active node
+- Stops all services on old active node
+- Updates `.active-node` tracker
+
+**Fast Planned Switch** (no restore, but clean shutdown):
+```bash
+make failover SKIP_RESTORE=true
+```
+- Skips backup restore (use when data is already synced)
+- Deploys base + apps on new active node
+- Stops all services on old active node
+- Faster switchover (~2 minutes instead of ~10 minutes)
+
+**Disaster Recovery Mode** (old node is DOWN/unreachable):
+```bash
+make failover STOP_OLD_ACTIVE=false
+```
+- Restores latest backup from active node
+- Deploys base + apps on new active node
+- Skips attempting to stop old node (gracefully handles unreachable nodes)
+- Use when primary node has crashed or is offline
+
+**Development/Testing Mode** (both nodes running):
+```bash
+make failover SKIP_RESTORE=true STOP_OLD_ACTIVE=false
+```
+- Fast switch without data movement
+- Leaves both nodes running (for testing)
+
+#### How It Works
+
+1. **Active Node Tracking**: `.active-node` file tracks current active (rpi-home or rpi-friend)
+2. **Automatic Target Selection**: Failover automatically switches to the OTHER node
+3. **Bidirectional**: Run `make failover` again to switch back
+4. **State Management**: Automatically updates tracker after successful failover
+
+**Example Flow:**
+```bash
+# Initial state: rpi-home is active
+cat .active-node
+# Output: rpi-home
+
+# Switch to rpi-friend
+make failover
+# Switches from rpi-home → rpi-friend
+
+cat .active-node
+# Output: rpi-friend
+
+# Switch back to rpi-home
+make failover
+# Switches from rpi-friend → rpi-home
+```
+
+#### Manual Recovery (if needed)
+
+If automatic failover fails, manual recovery:
+
+```bash
+# Restore specific backup to a node
+make restore-latest HOST=rpi-friend FROM=rpi-home
+
+# Deploy services
 make deploy-base
-make deploy-apps target=rpi-home
-make deploy-backup-automation
+make deploy-apps target=rpi-friend
+
+# Manually update active tracker
+echo "rpi-friend" > .active-node
 ```
 
-**Monthly Backup Test:**
+### Monitoring
+
+#### Service Health
 
 ```bash
-make restore-test HOST=rpi-friend
-# SSH in and verify /tmp/restic_restore_test/
+# Check container status
+ssh homelab@rpi-home "docker ps --format 'table {{.Names}}\t{{.Status}}'"
+
+# Check container resource usage
+ssh homelab@rpi-home "docker stats --no-stream"
 ```
 
-**Migration to Austria:**
+#### Backup Status
 
 ```bash
-# Before shipping rpi-home
-make promote-friend
+# View recent backup logs
+make backup-log HOST=rpi-home
 
-# After setting up rpi-home in Austria
-make restore-latest HOST=rpi-home
-make deploy-apps target=rpi-home
+# Check if backup is currently running
+make backup-status HOST=rpi-home
+
+# Watch backup progress in real-time
+make watch-backup HOST=rpi-home
+
+# List backups in B2
+rclone lsd b2-crypt:rpi-homelab-backup/rpi-home/
+
+# View cron job status
+ssh homelab@rpi-home "systemctl status cron"
+```
+
+#### Manual Backup Operations
+
+```bash
+# Trigger immediate backup (runs in background)
+make backup-now HOST=rpi-home
+
+# Backup all nodes
+make backup-all
+
+# Test restore to temporary directory (non-destructive)
+make restore-test HOST=rpi-home
+
+# Cross-node restore test (DR testing)
+make restore-test HOST=rpi-friend FROM=rpi-home
 ```
 
 ---
 
-## 2. Repository Structure & File Explanations
+## 6. Architecture
 
-This is a breakdown of what each file and directory is for.
+### Network Architecture
+
+```
+Internet (Optional - if you add cloud proxy)
+   │
+   └─── Tailscale VPN Mesh (100.x.x.x network)
+        │
+        ├─── RPi-Home (Primary)
+        │    ├─── Base Services (PostgreSQL, Redis)
+        │    └─── App Services (FreshRSS, Mealie, etc.)
+        │
+        ├─── RPi-Friend (Standby)
+        │    └─── Base Services Only (ready for promotion)
+        │
+        └─── India-Box (Optional)
+             └─── Backup target
+```
+
+**Access Method:** All services accessed via Tailscale IPs (100.x.x.x). You must be connected to Tailscale VPN to access services.
+
+**No Public Exposure:** Services are NOT exposed to the internet. This is more secure than having a public-facing proxy.
+
+### Network Architecture
+
+```
+Internet
+   │
+   │ (HTTPS via domain)
+   ↓
+┌──────────────┐
+│  Cloud VM    │  ← Public entry point
+│  Traefik     │
+│  Authentik   │
+└──────┬───────┘
+       │
+       │ Tailscale VPN (100.x.x.x)
+       ↓
+┌──────┴────────────┬──────────────┐
+│                   │              │
+RPi-Home      RPi-Friend      India-Box
+(Primary)      (Standby)      (Optional)
+```
+
+**How it works:**
+
+1. User accesses `freshrss.yourdomain.com`
+2. DNS points to Cloud VM public IP
+3. Traefik (on Cloud VM) receives request
+4. Authentik validates user authentication
+5. Traefik proxies request via Tailscale to RPi-Home
+6. Service responds back through same path
+
+**Note:** Cloud VM provides public access with SSO. Services on RPis are NEVER exposed directly to internet.
+
+### Service Placement
+
+| Service          | RPi-Home | RPi-Friend | Cloud VM | India-Box |
+| ---------------- | -------- | ---------- | -------- | --------- |
+| Tailscale        |        | ✅         | ✅       | ✅\*      |
+| PostgreSQL       |        | ✅         | ❌       | ❌        |
+| Redis            |        | ✅         | ❌       | ❌        |
+| Traefik          |        | ✅         | ✅       | ❌        |
+| Authentik (SSO)  |        | ✅         | ❌       | ❌        |
+| Uptime Kuma      |        | ❌         | ✅       | ❌        |
+| AdGuard Home     |        | ❌         | ✅       | ❌        |
+| Mealie           |        | ⏸️         | ❌       | ❌        |
+| Wallos           |        | ⏸️         | ❌       | ❌        |
+| Sterling PDF     |        | ⏸️         | ❌       | ❌        |
+| SearXNG          |        | ⏸️         | ❌       | ❌        |
+| VS Code Server   |        | ⏸️         | ❌       | ❌        |
+| Open WebUI       |        | ⏸️         | ❌       | ❌        |
+| Audiobookshelf   |        | ⏸️         | ❌       | ❌        |
+| n8n              |        | ⏸️         | ❌       | ❌        |
+| Homarr           |        | ⏸️         | ❌       | ❌        |
+| Paperless-ngx    |        | ⏸️         | ❌       | ❌        |
+| Backups (Rclone) |        | ✅         | ✅\*     | ✅\*      |
+
+**Legend:**
+
+-  Always running
+- ⏸ Installed but disabled (can be enabled with `make failover`)
+-  Not installed
+- \* Optional (India-Box only)
+
+**Notes:**
+- **Tailscale** runs as system service on all nodes (not in Docker)
+- **Cloud VM** is REQUIRED - provides public access via Traefik, Authentik SSO, and Uptime Kuma monitoring
+- **India-Box** is optional - provides additional backup target
+
+### Data Flow
+
+```
+User Device (in Tailscale)
+    ↓
+Tailscale VPN (encrypted tunnel)
+    ↓
+RPi-Home:8081 (FreshRSS)
+    ↓
+PostgreSQL (127.0.0.1:5432)
+    ↓
+Nightly Backup → B2 Storage (encrypted)
+```
+
+### Security Model
+
+1. **No Direct Internet Exposure**
+
+   - All services bind to `127.0.0.1` or Tailscale IPs only
+   - No ports forwarded on home router
+
+2. **Tailscale VPN Mesh**
+
+   - All inter-node communication encrypted
+   - Zero-config WireGuard tunnels
+   - Access from anywhere via Tailscale client
+
+3. **SSH Hardening**
+
+   - Root login disabled
+   - Password authentication disabled
+   - Key-based auth only
+
+4. **Firewall (UFW)**
+
+   - Default deny incoming
+   - Only SSH, Tailscale ports allowed
+
+5. **Encrypted Backups**
+
+   - Rclone crypt with client-side encryption
+   - Data encrypted before leaving network
+
+---
+
+## 7. Repository Structure
 
 ```
 homelab/
-├── Makefile                # Shortcuts for common Ansible commands (deploy, backup, etc.).
-├── README.md               # This file.
-├── ansible/
-│   ├── roles/
-│   │   ├── common/         # Ansible role to set up directories and copy files.
-│   │   └── compose-deploy/ # Ansible role to deploy a Docker Compose stack.
-│   └── site.yml            # The main Ansible playbook that orchestrates deployments.
-├── env/
-│   ├── common.env          # Non-secret environment variables (TZ, PUID, paths).
-│   ├── local.env           # Local overrides for a specific machine (e.g., APPS_ENABLED).
-│   └── secrets.example.env # A template for your secrets. Copy to secrets.env.
-├── inventory/
-│   └── hosts.ini           # Ansible inventory. Defines your nodes and their IPs.
-├── scripts/
-│   ├── backup_now.sh       # Performs backups using Restic.
-│   ├── bootstrap.sh        # Prepares a new node for management.
-│   ├── db_dump.sh          # Dumps databases before a backup.
-│   ├── promote_friend.sh   # Promotes the DR node to primary.
-│   └── restore_latest.sh   # Restores data from a Restic backup.
-└── stacks/
-    ├── apps/
-    │   └── compose.yml     # Docker Compose file for the main applications.
+├── README.md                 # This file
+├── QUICKSTART.md            # 5-minute setup guide
+├── SECURITY.md              # Security policies
+├── CONTRIBUTING.md          # Contribution guidelines
+│
+├── Makefile                 # Automation commands
+│
+├── docs/                    # Additional documentation
+│   ├── OPERATIONS.md        # Detailed operations guide
+│   ├── DISASTER-RECOVERY.md # DR procedures
+│   ├── TESTING.md           # Testing scenarios
+│   ├── MIGRATION.md         # 20-day migration plan
+│   └── SSH-SETUP.md         # Detailed SSH setup
+│
+├── ansible/                 # Ansible automation
+│   ├── site.yml            # Main playbook
+│   └── roles/
+│       ├── common/         # Common tasks (directories, env files)
+│       ├── compose-deploy/ # Deploy Docker Compose stacks
+│       └── backup-automation/ # Setup backup cron jobs
+│
+├── env/                     # Environment configuration
+│   ├── common.env          # Common variables (timezone, paths)
+│   ├── local.env           # Node-specific overrides
+│   ├── secrets.env         # Secrets (NOT in git)
+│   └── secrets.example.env # Template for secrets
+│
+├── inventory/               # Ansible inventory
+│   ├── hosts.ini           # Node definitions
+│   ├── group_vars/
+│   │   └── rpi_nodes.yml   # RPi-specific variables
+│   └── host_vars/
+│       ├── rpi-home.yml    # rpi-home specific vars
+│       └── rpi-friend.yml  # rpi-friend specific vars
+│
+├── scripts/                 # Utility scripts
+│   ├── bootstrap.sh        # Bootstrap new nodes
+│   ├── validate_setup.sh   # Pre-deployment validation
+│   ├── backup_now.sh       # Manual backup script
+│   ├── restore_latest.sh   # Restore from backup
+│   ├── db_dump.sh          # Database backup helper
+│
+└── stacks/                  # Docker Compose stacks
     ├── base/
-    │   └── compose.yml     # Docker Compose file for base services (DBs, Tailscale).
+    │   └── compose.yml     # Base services
+    ├── apps/
+    │   └── compose.yml     # Application services
     └── overrides/
-        ├── cloud.traefik.yml # Example config for exposing services via the cloud proxy.
-        └── local.private.yml # Override to ensure services only bind to localhost.
+        ├── cloud.traefik.yml    # Cloud proxy config (optional - see docs/CLOUD-PROXY-SETUP.md)
+        └── local.private.yml    # Localhost-only binding
 ```
+
+### Key Files Explained
+
+**Makefile**
+
+- Provides convenient commands for all operations
+- Wraps Ansible playbooks and SSH commands
+- Run `make help` to see all commands
+
+**ansible/site.yml**
+
+- Main Ansible playbook
+- Orchestrates all deployments
+- Uses tags for selective deployment
+
+**env/secrets.env**
+
+- Contains all passwords and API keys
+- Must be created from `secrets.example.env`
+- Never committed to git
+
+**inventory/hosts.ini**
+
+- Defines your nodes and their IPs
+- Must be updated with actual Tailscale IPs
+- Used by all Ansible commands
+
+**scripts/bootstrap.sh**
+
+- Prepares fresh nodes for management
+- Installs Docker, Tailscale, security tools
+- Creates `homelab` user
+
+**stacks/base/compose.yml**
+
+- Core infrastructure services
+- Deployed to all nodes
+- Includes databases (PostgreSQL, Redis)
+- Note: Tailscale runs as system service, not in Docker
+
+**stacks/apps/compose.yml**
+
+- User-facing applications
+- Deployed only to primary node (or promoted standby)
+- All apps bind to localhost for security
 
 ---
 
-## Operational Guide: From Setup to Disaster Recovery
+## 8. Additional Documentation
 
-This guide provides detailed, step-by-step instructions for setting up, managing, and maintaining your homelab.
+Detailed guides for specific scenarios:
 
-### Part 1: Understanding the Configuration
+### Core Documentation
 
-#### How the Environment Files Work (`common.env`, `local.env`, `secrets.env`)
+- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide for first-time deployment
+- **[docs/OPERATIONS.md](docs/OPERATIONS.md)** - Comprehensive operations and maintenance guide
+- **[docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md)** - DR procedures and runbooks
 
-You do **not** need to create these files on every node. You manage **one central copy** of these files in the `env/` directory of this repository. When you run Ansible, it copies these files to each target node.
+### Scenario Guides
 
-- `env/secrets.env`:
+- **[docs/TESTING.md](docs/TESTING.md)** - Testing scenarios and validation procedures
+  - From-scratch setup testing
+  - Backup and restore testing
+  - Disaster recovery simulation
+  - High availability testing
+  - Network failure scenarios
 
-  - **What it is**: For all your secrets: API keys, passwords, etc.
-  - **Example**: `RESTIC_PASSWORD=your-strong-password`, `B2_APP_KEY=...`
-  - **How it's used**: You must copy `secrets.example.env` to `secrets.env` and fill it out. This file is listed in `.gitignore` and **must never be committed to git**.
+### Planning & Migration
 
-- `env/common.env`:
+- **[docs/MIGRATION.md](docs/MIGRATION.md)** - 20-day migration plan for Austria deployment
+  - Week-by-week tasks
+  - Risk assessment
+  - Rollback procedures
+  - Timeline and milestones
 
-  - **What it is**: For non-secret variables that are the **same for all nodes**.
-  - **Example**: `TZ=Asia/Kolkata`, `PUID=1000`, `APPDATA_PATH=/srv/appdata`.
-  - **How it's used**: Ansible copies this file to every node. All containers on all nodes will use these values.
+### Security
 
-- `env/local.env`:
+- **[SECURITY.md](SECURITY.md)** - Security overview and best practices
+  - Security model
+  - Threat analysis
+  - Hardening checklist
+  - Incident response
 
-  - **What it is**: For variables that might **differ between nodes**. The most important one is `APPS_ENABLED`.
-  - **Example**: `APPS_ENABLED=true`.
-  - **How it's used**: This is the key to controlling which machine is the "primary."
-    - To make `rpi-home` the primary app server, you would set `APPS_ENABLED=true` in this file, then run the deployment for `rpi-home`.
-    - To make `rpi-friend` the primary, you would do the same for `rpi-friend`.
-    - The `promote_friend.sh` script automates changing this value on the remote machine.
+### Reference
 
-#### How `APPS_ENABLED` Works
+- **[docs/SSH-SETUP.md](docs/SSH-SETUP.md)** - Detailed SSH key setup guide
+- **[docs/DOCKER-PULL-STRATEGY.md](docs/DOCKER-PULL-STRATEGY.md)** - Docker image caching and rate limit avoidance
+- **[docs/SERVICES.md](docs/SERVICES.md)** - Complete service documentation
+- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 
-The main Ansible playbook (`ansible/site.yml`) has a special condition for deploying the applications:
+### Authentication & Security
 
-```yaml
-- name: Deploy Application Stack
-  hosts: all
-  # ...
-  when: APPS_ENABLED | default(false) | bool
-```
+- **[docs/AUTHENTIK-SETUP.md](docs/AUTHENTIK-SETUP.md)** - Authentik SSO setup and configuration
+  - Initial deployment and admin setup
+  - Forward auth for apps without OIDC
+  - Native OIDC for n8n and Paperless
+  - User management and MFA
+  - Troubleshooting guide
 
-This means the "Deploy Application Stack" part of the playbook will **only run** if Ansible finds `APPS_ENABLED=true` in the environment files for that specific host. If it's `false` or not set, the entire app deployment is skipped for that host.
+### Optional Components
 
-#### How `make deploy-apps target=rpi-home` Works
-
-This is a breakdown of the magic:
-
-1. You run `make deploy-apps target=rpi-home`.
-2. The `Makefile` translates this into a full Ansible command:
-   `ansible-playbook ansible/site.yml --tags "apps" --limit rpi-home`
-3. Let's break down the Ansible command:
-   - `ansible-playbook ansible/site.yml`: Run the main playbook.
-   - `--tags "apps"`: Only run the parts of the playbook tagged with "apps".
-   - `--limit rpi-home`: **Only run against the `rpi-home` host** from your `inventory/hosts.ini` file. `rpi-friend` and other hosts are ignored for this command.
-4. Ansible connects to `rpi-home`, reads the environment files it finds there (which it previously copied), sees `APPS_ENABLED=true`, and proceeds to deploy the application containers.
-
-### Part 2: Step-by-Step Scenarios
-
-Here are detailed walkthroughs for common operational tasks. **Run these commands from your management machine**, in the root of this repository.
-
----
-
-#### Scenario 1: Initial Setup From Scratch
-
-This is what you do when you have brand new, freshly bootstrapped nodes.
-
-**Goal**: Deploy base services to all nodes and application services only to `rpi-home`.
-
-**Order of Commands:**
-
-1. **Set `rpi-home` as the App Host**:
-   Edit `env/local.env` and make sure it contains:
-
-   ```
-   APPS_ENABLED=true
-   ```
-
-2. **Deploy Base Services to ALL Nodes**:
-   This command connects to `rpi-home` and `rpi-friend` (and any other hosts in your inventory) and deploys the `base` stack (Postgres, Redis, Tailscale, etc.).
-
-   ```bash
-   make deploy-base
-   ```
-
-3. **Deploy App Services to `rpi-home` ONLY**:
-   This command targets **only** `rpi-home` and, because `APPS_ENABLED` is true, deploys the application stack (FreshRSS, Mealie, etc.).
-
-   ```bash
-   make deploy-apps target=rpi-home
-   ```
-
-4. **(Optional) Deploy Backup Automation**:
-   If you want to set up automated backups immediately, make sure `BACKUP_AUTOMATION_ENABLED=true` is set in `env/local.env` for `rpi-home`, then run:
-
-   ```bash
-   make deploy-backup-automation
-   ```
-
-**Result**: `rpi-home` is running both base and app services with optional automated backups. `rpi-friend` is running only base services, acting as a warm standby.
+- **[docs/CLOUD-PROXY-SETUP.md](docs/CLOUD-PROXY-SETUP.md)** - Adding public internet access via cloud edge proxy
+  - When to add cloud proxy vs. Tailscale-only
+  - Complete setup guide (Traefik + Authentik)
+  - Cost analysis (~$6-11/month)
+  - Security considerations
+  - Cloudflare Tunnel alternative
 
 ---
 
-#### Scenario 2: Performing a Manual Backup
+## 9. Troubleshooting
 
-**Goal**: Trigger a backup of `rpi-home`'s data to Backblaze B2.
+### Common Issues
 
-**Order of Commands:**
+#### "SSH connection failed"
 
-1. **Standard Backup**:
+```bash
+# Verify SSH key is loaded
+ssh-add -l
 
-   **Primary Method (Recommended):**
+# Test connection manually
+ssh -v homelab@<tailscale-ip>
 
-   ```bash
-   make backup-now HOST=rpi-home
-   ```
+# Re-copy SSH key if needed
+ssh-copy-id homelab@<tailscale-ip>
+```
 
-   **Manual Method (for reference):**
+#### "Ansible ping fails"
 
-   ```bash
-   ssh rpi-home "sudo /opt/backups/backup_now.sh"
-   ```
+```bash
+# Test direct SSH
+ssh homelab@rpi-home "echo 'Connection OK'"
 
-2. **(Optional) Pre-Move Full Backup**:
-   If you are about to move and want to include all your media files, use the `--with-media` flag.
+# Check inventory syntax
+ansible-inventory -i inventory/hosts.ini --list
 
-   **Manual Method (no make shortcut for this variant):**
+# Try with verbose mode
+ansible rpi-home -i inventory/hosts.ini -m ping -vvv
+```
 
-   ```bash
-   ssh homelab@<rpi_home_ip> "sudo /opt/backups/backup_now.sh --with-media"
-   ```
+#### "Ansible sudo password fails"
 
-**Result**: The script on `rpi-home` will dump the databases, then Restic will back up the app data and DB dumps to your encrypted B2 bucket.
+```bash
+# Error: "Missing sudo password" or "Incorrect sudo password"
+# Solution: Check encrypted passwords are configured correctly
+
+# Test vault decryption
+ansible-vault view inventory/group_vars/rpi_nodes.yml
+
+# Verify sudo password manually
+ssh homelab@rpi-home
+sudo whoami  # Should prompt for password, then work
+
+# Re-encrypt password if needed
+echo 'ansible_sudo_pass: YOUR_CORRECT_PASSWORD' | ansible-vault encrypt_string --stdin-name 'ansible_sudo_pass'
+```
+
+#### "Vault password prompt issues"
+
+```bash
+# Error: "Vault password required"
+# Solution: All deployment commands need --ask-vault-pass (handled by Makefile)
+
+# Test vault password manually
+ansible rpi_nodes -i inventory/hosts.ini -m shell -a "sudo whoami" --ask-vault-pass
+
+# If you forgot vault password, re-encrypt all vault files:
+ansible-vault rekey inventory/group_vars/rpi_nodes.yml
+ansible-vault rekey inventory/group_vars/cloud_nodes.yml
+```
+
+#### "Docker containers not starting"
+
+```bash
+# Check logs
+ssh homelab@rpi-home
+docker compose -f /opt/stacks/apps/compose.yml logs
+
+# Verify secrets are loaded
+docker compose -f /opt/stacks/apps/compose.yml config | grep -i password
+
+# Restart stack
+docker compose -f /opt/stacks/apps/compose.yml down
+docker compose -f /opt/stacks/apps/compose.yml up -d
+```
+
+#### "Backup failing"
+
+```bash
+# Check backup log
+ssh homelab@rpi-home
+tail -n 100 /var/log/backup.log
+
+# Test B2 connection and list backups
+rclone lsd b2-crypt:rpi-homelab-backup/
+
+# Test specific node backups
+rclone lsd b2-crypt:rpi-homelab-backup/rpi-home/
+```
+
+#### "Can't access services"
+
+```bash
+# Verify Tailscale is connected
+ssh homelab@rpi-home tailscale status
+
+# Check service is listening
+ssh homelab@rpi-home "netstat -tlnp | grep 8081"
+
+# Test from node itself
+ssh homelab@rpi-home "curl http://127.0.0.1:8081"
+```
+
+### Getting Help
+
+1. Check logs: `docker compose logs -f`
+2. Run validation: `make validate`
+3. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for detailed solutions
+4. Create an issue with:
+   - Error message
+   - Output of `make validate`
+   - Relevant logs
 
 ---
 
-#### Scenario 3: Validating Backups (Disaster Recovery Drill)
+## License
 
-**Goal**: Test your backups by restoring them to `rpi-friend` **without** interrupting the live services on `rpi-home`. This is the most critical maintenance task you can perform.
-
-**Order of Commands:**
-
-1. **Run a Non-Destructive Restore on `rpi-friend`**:
-
-   **Primary Method (Recommended):**
-
-   ```bash
-   make restore-test HOST=rpi-friend
-   ```
-
-   **Manual Method (for reference):**
-
-   ```bash
-   ssh rpi-friend "sudo /opt/backups/restore_latest.sh --test"
-   ```
-
-2. **Verify the Restored Data**:
-   The script will restore the latest backup to a temporary directory: `/tmp/restic_restore_test`. SSH into `rpi-friend` and inspect the contents.
-
-   ```bash
-   ssh homelab@<rpi_friend_ip>
-   sudo ls -l /tmp/restic_restore_test/srv/appdata
-   sudo ls -l /tmp/restic_restore_test/tmp/db_dumps
-   exit
-   ```
-
-   Check that the file names and dates look correct.
-
-3. **Clean Up the Test Restore**:
-   Once you are satisfied, remove the temporary directory.
-
-   ```bash
-   ssh homelab@<rpi_friend_ip> "sudo rm -rf /tmp/restic_restore_test"
-   ```
-
-**Result**: You have successfully verified that your backups are working and can be restored, all with zero downtime.
+[Your License Here]
 
 ---
 
-#### Scenario 4: Full Disaster Recovery (Promoting `rpi-friend`)
+## Acknowledgments
 
-**Goal**: `rpi-home` has died. You need to make `rpi-friend` the new primary application server.
+Built with:
 
-**Order of Commands:**
+- [Ansible](https://www.ansible.com/) - Automation
+- [Docker](https://www.docker.com/) - Containerization
+- [Tailscale](https://tailscale.com/) - VPN mesh networking
+- [Rclone](https://rclone.org/) - Backup and sync solution
+- [Backblaze B2](https://www.backblaze.com/b2/) - Cloud storage
 
-1. **Perform a Full Restore on `rpi-friend`**:
-   **Warning: This is a destructive action** that will stop services and overwrite data on `rpi-friend`.
-
-   **Primary Method (Recommended):**
-
-   ```bash
-   make restore-latest HOST=rpi-friend
-   ```
-
-   **Manual Method (for reference):**
-
-   ```bash
-   ssh rpi-friend "sudo /opt/backups/restore_latest.sh"
-   ```
-
-   This restores the latest application data and database dumps to their proper locations (`/srv/appdata`, etc.).
-
-2. **Promote `rpi-friend`**:
-   From your management machine, run the promotion script.
-
-   ```bash
-   bash scripts/promote_friend.sh
-   ```
-
-   This script does two things automatically:
-   a. It SSHes into `rpi-friend` and changes its `/opt/stacks/env/local.env` to `APPS_ENABLED=true`.
-   b. It runs `make deploy-apps target=rpi-friend` to start the application stack using the newly restored data.
-
-3. **Update DNS/Proxy (If Necessary)**:
-   If your cloud Traefik instance was pointing to `rpi-home`'s Tailscale IP, you must now update it to point to `rpi-friend`'s Tailscale IP.
-
-**Result**: `rpi-friend` is now your live, primary application server. Downtime is limited to the time it takes to restore and deploy the apps.
-
----
-
-#### Scenario 5: Adding a New Application
-
-**Goal**: You want to add a new service, for example, `Gitea`.
-
-**Order of Commands:**
-
-1. **Edit the Apps Compose File**:
-   Open `stacks/apps/compose.yml` and add the service definition for Gitea. Make sure to bind its port to `127.0.0.1` and define its volumes under `${APPDATA_PATH}/gitea`.
-2. **Add Secrets (If Needed)**:
-   If Gitea needs a database password or other secrets, add the variables to `env/secrets.env`.
-3. **Re-run the App Deployment**:
-   Deploy the changes to your primary server (`rpi-home`).
-
-   ```bash
-   make deploy-apps target=rpi-home
-   ```
-
-   Docker Compose will see the new service definition and start only the Gitea container, leaving all other running services untouched.
-
-**Result**: Your new application is now running, managed by the same automated workflow.
-
----
-
-#### Scenario 6: Setting Up Automated Backups with Ansible
-
-**Goal**: Deploy automated backup cron jobs to your primary node (`rpi-home`) using Ansible.
-
-**Order of Commands:**
-
-1.  **Configure Backup Variables**:
-    Edit `env/local.env` to enable backup automation for your primary node:
-
-    ```bash
-    # Edit the local environment file
-    nano env/local.env
-    ```
-
-    Add or modify these variables:
-
-    ```
-    BACKUP_AUTOMATION_ENABLED=true
-    BACKUP_MIRROR_ENABLED=false  # Set to true if you want Linode mirroring
-    BACKUP_WITH_MEDIA_ENABLED=true  # Set to true for pre-move period
-    ```
-
-2.  **Deploy Backup Automation**:
-
-    **Primary Method (Recommended):**
-
-    ```bash
-    make deploy-backup-automation
-    ```
-
-    **Manual Method (for reference):**
-
-    ```bash
-    ansible-playbook -i inventory/hosts.ini ansible/site.yml --tags "backup-automation"
-    ```
-
-3.  **Verify Installation**:
-    Check that the cron jobs were properly installed on the target node:
-
-    ```bash
-    ssh rpi-home "sudo crontab -l"
-    ```
-
-4.  **Test the Backup**:
-    Manually trigger a backup to ensure everything is working:
-    ```bash
-    make backup-now HOST=rpi-home
-    ```
-
-**Result**: Your primary node now has automated daily backups, weekly repository checks, and optional features like Linode mirroring and monthly full backups, all managed through Ansible.
-
-**Post-Move Adjustments**: After moving to Austria, update `env/local.env` to set `BACKUP_WITH_MEDIA_ENABLED=false` and re-run `make deploy-backup-automation` to disable the monthly full backup with media.
-
----
-
-#### Scenario 7: Using the India Box for Offsite Backups
-
-**Goal**: The `India Box` is primarily an offsite target for backups, providing an extra layer of redundancy. This scenario details how to use it for backup validation.
-
-**Setup**:
-
-1. **Bootstrap the India Box**: Follow the same bootstrap procedure as the Raspberry Pi nodes.
-2. **Add to Inventory**: Add the `india-box` and its Tailscale IP to `inventory/hosts.ini`.
-3. **Deploy Base Services**: Run `make deploy-base`. This is important as it ensures `restic` and other necessary tools are available on the box via the Ansible deployment. Note that `APPS_ENABLED` should be `false` for this node.
-
-**Execution**:
-You can treat the India Box as another DR node, similar to `rpi-friend`. You can validate your main backups by restoring them to this box.
-
-1. **Run a Non-Destructive Restore on `india-box`**:
-   This command is identical to the DR drill for `rpi-friend`, but targets the `india-box`.
-
-   **Primary Method (Recommended):**
-
-   ```bash
-   make restore-test HOST=india-box
-   ```
-
-   **Manual Method (for reference):**
-
-   ```bash
-   ssh india-box "sudo /opt/backups/restore_latest.sh --test"
-   ```
-
-2. **Verify and Clean Up**:
-   SSH into the `india-box`, check the restored files in `/tmp/restic_restore_test`, and then remove the directory.
-
-   ```bash
-   ssh homelab@<india_box_ip>
-   sudo ls -l /tmp/restic_restore_test/srv/appdata
-   sudo rm -rf /tmp/restic_restore_test
-   exit
-   ```
-
-**Result**: You have now used your dedicated offsite backup node to validate the integrity of your primary backups without touching your hot standby (`rpi-friend`). This is a robust DR strategy.
-
----
-
-## 6. Automated Backup Setup
-
-To ensure your data is automatically backed up, you can use Ansible to deploy cron jobs to your nodes. This section covers the complete automation setup using both Ansible and manual methods.
-
-### Setting Up Automated Backups
-
-**Goal**: Configure automatic daily backups with weekly repository checks and optional mirroring to Linode.
-
-#### Method 1: Ansible-Based Deployment (Recommended)
-
-This method uses Ansible to consistently deploy backup automation across your nodes.
-
-**Step 1: Configure Backup Automation Variables**
-
-Edit your `env/local.env` file for the specific node where you want to enable backups (typically `rpi-home`):
-
-```bash
-# Enable automated backup cron jobs (set to true for primary nodes)
-BACKUP_AUTOMATION_ENABLED=true
-# Enable weekly mirroring to Linode Object Storage (optional)
-BACKUP_MIRROR_ENABLED=false
-# Enable monthly full backup with media (for pre-move period only)
-BACKUP_WITH_MEDIA_ENABLED=true
-```
-
-**Step 2: Deploy Backup Automation**
-
-**Primary Method (Recommended):**
-
-```bash
-make deploy-backup-automation
-```
-
-**Manual Method (for reference):**
-
-```bash
-ansible-playbook -i inventory/hosts.ini ansible/site.yml --tags "backup-automation"
-```
-
-**Step 3: Verify Deployment**
-
-Check that the cron jobs were installed:
-
-```bash
-ssh rpi-home "sudo crontab -l"
-```
-
-#### Method 2: Manual SSH Setup (Alternative)
-
-If you prefer to set up cron jobs manually without Ansible:
-
-**Step 1: SSH into your primary node and edit the root crontab:**
-
-```bash
-ssh rpi-home
-sudo crontab -e
-```
-
-**Step 2: Add the following cron job entries:**
-
-```cron
-# Daily backup at 3:00 AM (important data only, no media)
-0 3 * * * /opt/backups/backup_now.sh >> /var/log/restic_backup.log 2>&1
-
-# Weekly repository check at 4:00 AM on Sundays
-0 4 * * 0 restic -r $(grep RESTIC_REPOSITORY /opt/stacks/env/common.env | cut -d= -f2) check >> /var/log/restic_check.log 2>&1
-
-# Weekly copy to Linode mirror at 5:00 AM on Sundays (optional)
-0 5 * * 0 /opt/backups/backup_now.sh --copy-to-linode >> /var/log/restic_copy.log 2>&1
-
-# Monthly backup with media (first Sunday of each month at 6:00 AM) - for pre-move period only
-0 6 1-7 * * 0 /opt/backups/backup_now.sh --with-media >> /var/log/restic_backup_full.log 2>&1
-```
-
-#### Step 2: Set Up Log Rotation
-
-Create a logrotate configuration to prevent log files from growing too large:
-
-```bash
-ssh rpi-home
-sudo tee /etc/logrotate.d/homelab-backups << 'EOF'
-/var/log/restic_*.log {
-    daily
-    missingok
-    rotate 30
-    compress
-    notifempty
-    create 0644 root root
-}
-EOF
-```
-
-#### Step 3: Test the Automated Backup
-
-Manually trigger the backup script to ensure it works correctly:
-
-**Primary Method (from management machine):**
-
-```bash
-make backup-now HOST=rpi-home
-```
-
-**Manual Method:**
-
-```bash
-ssh rpi-home "sudo /opt/backups/backup_now.sh"
-```
-
-Check the log file to verify it ran successfully:
-
-```bash
-ssh rpi-home "sudo tail -f /var/log/restic_backup.log"
-```
-
-### Backup Schedule Explanation
-
-- **Daily at 3:00 AM**: Standard backup of application data and database dumps (excludes media)
-- **Weekly on Sunday at 4:00 AM**: Repository integrity check using `restic check`
-- **Weekly on Sunday at 5:00 AM**: Optional copy to Linode Object Storage for additional redundancy
-- **Monthly (first Sunday at 6:00 AM)**: Full backup including media (disable this after your move to Austria)
-
-### Post-Move Adjustments
-
-After you've moved to Austria and set up your new main homelab server:
-
-1. **Disable the monthly full backup** by commenting out or removing that cron line
-2. **Run a one-time media cleanup**:
-   ```bash
-   ssh rpi-home "sudo /opt/backups/backup_now.sh --prune-media"
-   ```
-3. **Continue with daily important-data-only backups**
-
-### Monitoring Backup Status
-
-To check if your backups are running successfully:
-
-1. **Check recent backup logs**:
-
-   ```bash
-   ssh rpi-home "sudo tail -20 /var/log/restic_backup.log"
-   ```
-
-2. **List recent snapshots**:
-
-   ```bash
-   ssh rpi-home "restic -r \$(grep RESTIC_REPOSITORY /opt/stacks/env/common.env | cut -d= -f2) snapshots --latest 5"
-   ```
-
-3. **Check repository statistics**:
-   ```bash
-   ssh rpi-home "restic -r \$(grep RESTIC_REPOSITORY /opt/stacks/env/common.env | cut -d= -f2) stats"
-   ```
-
-### Troubleshooting Common Issues
-
-**Backup fails with permission errors**: Ensure the backup script has executable permissions:
-
-```bash
-ssh rpi-home "sudo chmod +x /opt/backups/*.sh"
-```
-
-**Repository not found error**: Verify your secrets are correctly set:
-
-```bash
-ssh rpi-home "sudo cat /opt/stacks/env/secrets.env | grep -E '(RESTIC|B2)'"
-```
-
-**Cron job not running**: Check if the cron service is active:
-
-```bash
-ssh rpi-home "sudo systemctl status cron"
-```
-
----
-
-## 7. Security Overview
-
-- **SSO Everywhere**: Use Traefik + Authentik forward-auth for all web services.
-- **Local Binds**: All container ports are bound to `127.0.0.1` by default.
-- **No Cross-Site DB Calls**: Databases are co-located with their applications.
-- **SSH Keys Only**: The bootstrap script disables password authentication.
-- **Secret Management**: `env/secrets.env` is in `.gitignore`. Consider using `sops` for encryption at rest.
-- **Periodic Updates**: `unattended-upgrades` is enabled. Periodically pull new container images.
-- **Container Pinning**: For production, change image tags from `:latest` to specific versions.
-- **Least-Privilege DB Users**: Create dedicated database users for each application.
-- **Firewall Enabled**: UFW denies all incoming traffic except for SSH and Tailscale.
-- **AdGuard UI Restriction**: After setup, bind the AdGuard Home UI to `127.0.0.1` and access via SSH port forwarding.
-
----
-
-## 7. 30-Day Migration Timeline
-
-- **Week 0–1 (Setup & Baseline)**
-
-  - [ ] Bootstrap both RPis and bring them up on Tailscale.
-  - [ ] Configure Ansible (`inventory/hosts.ini`, `env/secrets.env`).
-  - [ ] Run `make deploy-base` for both nodes.
-  - [ ] Set `APPS_ENABLED=true` on `RPi-Home` and run `make deploy-apps target=rpi-home`.
-  - [ ] Configure AdGuard Home, then restrict its UI.
-
-- **Week 2 (Backups & Monitoring)**
-
-  - [ ] Set up the cloud VM (Traefik, Authentik, Uptime-Kuma).
-  - [ ] Configure Authentik and expose a test service.
-  - [ ] Run a manual backup test: `sudo /opt/backups/backup_now.sh --with-media`.
-  - [ ] Set up the daily backup cron job.
-  - [ ] Add monitors in Uptime-Kuma.
-
-- **Week 3 (DR Drill)**
-
-  - [ ] On `RPi-Friend`, perform a non-destructive restore test: `sudo /opt/backups/restore_latest.sh --test`.
-  - [ ] Verify the restored data, then clean up the test directory.
-
-- **Move Week (Final Backup & Transition)**
-
-  - [ ] Pause non-essential services.
-  - [ ] Run a final, verified full backup: `sudo /opt/backups/backup_now.sh --with-media`.
-  - [ ] Run `restic check` to ensure repository integrity.
-  - [ ] Shut down and pack `RPi-Home`.
-
-- **Arrival in Austria (New Steady-State)**
-
-  - [ ] Set up the new main homelab server.
-  - [ ] Restore media and heavy workloads from Backblaze B2.
-  - [ ] Switch all nodes to "important-only" backups (without `--with-media`).
-  - [ ] Prune the old media backups to save cost: `sudo /opt/backups/backup_now.sh --prune-media`.
+Inspired by the homelab and self-hosting communities.
