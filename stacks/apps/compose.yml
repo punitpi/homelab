@@ -138,7 +138,12 @@ services:
       - TZ=${TZ}
     volumes:
       - ${APPDATA_PATH}/audiobookshelf/config:/config
-      - /mnt/audiobooks:/audiobooks:ro
+      - type: bind
+        source: /mnt/audiobooks
+        target: /audiobooks
+        read_only: true
+        bind:
+          propagation: shared
       - ${APPDATA_PATH}/audiobookshelf/podcasts:/podcasts
       - ${APPDATA_PATH}/audiobookshelf/metadata:/metadata
     ports:
