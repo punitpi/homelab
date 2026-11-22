@@ -32,6 +32,19 @@
     group: '{{ ansible_user }}'
     mode: '0644'
 
+# Secrets come from the vault (vault_stack_secrets in group_vars/all.yml) when it is set,
+# otherwise from the git-ignored env/secrets.env on the management machine.
+# See docs/ANSIBLE-SUDO-SETUP.md ("App secrets").
+- name: Write secrets environment file from the vault
+  ansible.builtin.template:
+    src: secrets.env.j2
+    dest: '{{ STACKS_PATH }}/env/secrets.env'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0600'
+  no_log: true
+  when: vault_stack_secrets is defined
+
 - name: Copy secrets environment file
   ansible.builtin.copy:
     src: '{{ playbook_dir }}/../env/secrets.env'
@@ -40,6 +53,7 @@
     group: '{{ ansible_user }}'
     mode: '0600'
   ignore_errors: true # Allow this to fail if secrets.env doesn't exist
+  when: vault_stack_secrets is not defined
 
 - name: Copy backup scripts
   ansible.builtin.copy:
