@@ -1034,13 +1034,8 @@ EOF
 # 2. Update inventory with final IPs
 nano inventory/hosts.ini
 
-# 3. Update host_vars with new details
-cat > inventory/host_vars/rpi-home.yml << EOF
----
-location: austria
-timezone: Europe/Vienna
-apps_enabled: true
-EOF
+# 3. Make sure apps stay enabled on rpi-home (gated by its local.env, not the inventory)
+ssh homelab@merry "grep -q '^APPS_ENABLED=true' /opt/stacks/env/local.env || echo 'APPS_ENABLED=true' >> /opt/stacks/env/local.env"
 
 # 4. Document network configuration
 cat > docs/NETWORK_CONFIG.md << EOF

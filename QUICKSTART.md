@@ -83,7 +83,7 @@ make check-health
 make check-urls HOST=rpi-home
 
 # Or SSH directly (Tailscale MagicDNS hostname)
-ssh homelab@ub-house-green "docker ps"
+ssh homelab@merry "docker ps"
 ```
 
 ### Test Backup System
@@ -124,9 +124,10 @@ When you move to Austria:
 
 ## Support 📚
 
-- **Full documentation**: [README.md](README.md)
-- **Operational scenarios**: See README sections 4-7
-- **Troubleshooting**: README section 8
+- **Full setup guide**: [docs/SETUP.md](docs/SETUP.md)
+- **Operations and failover**: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- **Troubleshooting**: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- **Everything else**: [README.md](README.md#documentation)
 
 Your homelab is now **production-ready** with:
 

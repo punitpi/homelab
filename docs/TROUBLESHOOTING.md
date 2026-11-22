@@ -299,7 +299,7 @@ make deploy-apps target=rpi-home
 
 1. **Test SSH connectivity:**
 ```bash
-ssh homelab@ub-house-green  # Using Tailscale MagicDNS
+ssh homelab@merry  # Using Tailscale MagicDNS
 # or
 ssh homelab@100.x.x.x  # Using Tailscale IP
 ```
@@ -340,29 +340,30 @@ ansible-playbook ansible/site.yml --ask-vault-pass
 
 **Solutions:**
 
-1. **Verify Vault password:**
+1. **Verify the vault decrypts:**
 ```bash
-# Test decryption
-ansible-vault view inventory/group_vars/rpi_nodes.yml
-# Should show decrypted ansible_sudo_pass
+ansible-vault view inventory/group_vars/all.yml
+# Should show vault_rpi_sudo_pass
 ```
 
-2. **Check sudo password is correct:**
+2. **Check the node's sudo password matches:**
 ```bash
-# SSH to node and test sudo
 ssh homelab@rpi-home
-sudo -k  # Clear cached sudo password
-sudo whoami  # Should prompt for password
-# Use the password from ansible_sudo_pass
+sudo -k      # Clear cached sudo password
+sudo whoami  # Use the value of vault_rpi_sudo_pass
 ```
 
-3. **Re-encrypt sudo password:**
+3. **Fix whichever side is wrong:** change the `homelab` user's password on the node, or update the value with `ansible-vault edit inventory/group_vars/all.yml`. See [ANSIBLE-SUDO-SETUP.md](ANSIBLE-SUDO-SETUP.md).
+
+### Backup failing
+
 ```bash
-# Generate new encrypted password
-echo 'ansible_sudo_pass: YOUR_ACTUAL_PASSWORD' | ansible-vault encrypt_string --stdin-name 'ansible_sudo_pass'
-
-# Update inventory/group_vars/rpi_nodes.yml with new encrypted value
+ssh homelab@merry "tail -n 100 /var/log/backup.log"
+ssh homelab@merry "rclone lsd b2-crypt:rpi-homelab-backup/"           # remote and credentials work?
+ssh homelab@merry "rclone lsd b2-crypt:rpi-homelab-backup/rpi-home/"  # this node's backup sets
 ```
+
+`rclone.conf` is not managed by Ansible; if the remote is missing on a rebuilt node, copy `/home/homelab/.config/rclone/rclone.conf` from the other node.
 
 ---
 

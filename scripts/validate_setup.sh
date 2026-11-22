@@ -30,11 +30,11 @@ check_file() {
 }
 
 check_env_var() {
-    if grep -q "^$1=" "$2" 2>/dev/null; then
+    if grep -q "^$1=." "$2" 2>/dev/null; then
         echo -e "  ✅ $1 ${GREEN}defined${NC}"
         return 0
     else
-        echo -e "  ❌ $1 ${RED}missing from $2${NC}"
+        echo -e "  ❌ $1 ${RED}missing or empty in $2${NC}"
         return 1
     fi
 }
@@ -46,9 +46,13 @@ validate_secrets() {
         "B2_KEY_ID"
         "B2_APP_KEY"
         "B2_BUCKET"
+        "CF_DNS_API_TOKEN"
         "PG_PASSWORD"
+        "PAPERLESS_DB_PASSWORD"
+        "PAPERLESS_SECRET_KEY"
+        "HOMARR_SECRET_KEY"
         "CODE_PASSWORD"
-        "ADGUARD_PASSWORD"
+        "CODE_SUDO_PASSWORD"
     )
     
     echo -e "\n📋 Checking required secrets in $env_file:"
@@ -56,10 +60,25 @@ validate_secrets() {
     
     for var in "${required_vars[@]}"; do
         if ! check_env_var "$var" "$env_file"; then
-            ((missing++))
+            missing=$((missing + 1))
         fi
     done
     
+    return $missing
+}
+
+# Every ${VAR} interpolated by the base and apps stacks must be defined in an env file
+# (a missing one reaches the container as an empty string and fails late, at runtime).
+validate_compose_vars() {
+    local missing=0 var
+    echo -e "\n🔑 Checking variables used by the stacks are defined:"
+    for var in $(grep -ohE '\$\{[A-Z][A-Z0-9_]*\}' stacks/base/compose.yml stacks/apps/compose.yml | tr -d '${}' | sort -u); do
+        if ! grep -qE "^${var}=" env/common.env env/secrets.env env/local.env 2>/dev/null; then
+            echo -e "  ❌ ${var} ${RED}used in a compose file but not defined in env/*.env${NC}"
+            missing=$((missing + 1))
+        fi
+    done
+    [[ $missing -eq 0 ]] && echo -e "  ✅ all compose variables ${GREEN}defined${NC}"
     return $missing
 }
 
@@ -81,7 +100,7 @@ FILES=(
 
 for file in "${FILES[@]}"; do
     if ! check_file "$file"; then
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     fi
 done
 
@@ -97,7 +116,8 @@ if [[ ! -f "env/secrets.env" ]]; then
     fi
 else
     if [[ "$CI_MODE" != "ci" ]]; then
-        validate_secrets "env/secrets.env"
+        validate_secrets "env/secrets.env" || ERRORS=$((ERRORS + 1))
+        validate_compose_vars || ERRORS=$((ERRORS + 1))
     else
         echo -e "  ${GREEN}✅ secrets.env exists (skipping validation in CI mode)${NC}"
     fi
@@ -111,7 +131,7 @@ if command -v docker >/dev/null 2>&1; then
             echo -e "  ✅ $(basename $(dirname $stack)) ${GREEN}valid${NC}"
         else
             echo -e "  ❌ $(basename $(dirname $stack)) ${RED}invalid syntax${NC}"
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     done
 else
@@ -125,7 +145,7 @@ if command -v ansible-playbook >/dev/null 2>&1; then
         echo -e "  ✅ Ansible playbook ${GREEN}syntax valid${NC}"
     else
         echo -e "  ❌ Ansible playbook ${RED}syntax error${NC}"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     fi
 else
     echo -e "  ${YELLOW}⚠️  Ansible not available, skipping syntax check${NC}"
@@ -135,11 +155,7 @@ fi
 echo -e "\n📊 Validation Summary:"
 if [[ $ERRORS -eq 0 ]]; then
     echo -e "  ${GREEN}🎉 All checks passed! Your homelab setup is ready.${NC}"
-    echo -e "\n📋 Next steps:"
-    echo "  1. Copy env/secrets.example.env to env/secrets.env"
-    echo "  2. Fill in all secret values in secrets.env"  
-    echo "  3. Update Tailscale IPs in inventory/hosts.ini"
-    echo "  4. Run: make deploy-base"
+    echo -e "\n📋 Next step: make deploy-base (rebuilding a node? see docs/RECOVERY-LOG-2026-11-rpi-home.md)"
 else
     echo -e "  ${RED}❌ $ERRORS error(s) found. Please fix them before proceeding.${NC}"
     exit 1

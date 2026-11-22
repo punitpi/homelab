@@ -326,23 +326,7 @@ check-urls:
 	ANSIBLE_HOST=$$(grep "^$$HOST" inventory/hosts.ini | awk '{print $$2}' | cut -d'=' -f2); \
 	echo "Checking service URLs on $$HOST ($$ANSIBLE_HOST)..."; \
 	echo ""; \
-	ssh homelab@$$ANSIBLE_HOST ' \
-		echo "Service              Port    Status"; \
-		echo "-------              ----    ------"; \
-		for svc in "mealie:9925" "wallos:8282" "sterling-pdf:8082" "searxng:8083" "code-server:8443" "open-webui:8084" "audiobookshelf:13378" "n8n:5678" "homarr:7575" "paperless:8000"; do \
-			name=$$(echo $$svc | cut -d: -f1); \
-			port=$$(echo $$svc | cut -d: -f2); \
-			code=$$(curl -4 -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:$$port 2>/dev/null); \
-			if [ "$$code" = "200" ] || [ "$$code" = "302" ] || [ "$$code" = "301" ]; then \
-				status="✓ OK ($$code)"; \
-			elif [ "$$code" = "000" ]; then \
-				status="✗ DOWN"; \
-			else \
-				status="? ($$code)"; \
-			fi; \
-			printf "%-20s %-7s %s\n" "$$name" ":$$port" "$$status"; \
-		done \
-	'
+	ssh homelab@$$ANSIBLE_HOST 'bash -s' < scripts/check_urls.sh
 
 show-resources:
 	@echo "Resource usage on all nodes..."
@@ -361,6 +345,7 @@ show-logs:
 update-packages:
 	@echo "Updating packages on all nodes..."
 	@ansible all -i inventory/hosts.ini -b -m apt -a "update_cache=yes upgrade=dist" --ask-vault-pass
+	@ansible all -i inventory/hosts.ini -b -m apt -a "autoremove=yes" --ask-vault-pass
 
 configure-network:
 	@echo "Configuring network priority (Ethernet over WiFi) on RPi nodes..."
@@ -474,10 +459,14 @@ update-images:
 		ansible rpi-home -i inventory/hosts.ini -m shell -a "cd /opt/stacks/apps && docker compose pull && docker compose up -d" --ask-vault-pass; \
 	fi
 	@echo ""
-	@echo "Updating cloud stack..."
-	@ansible cloud_nodes -i inventory/hosts.ini -m shell -a "cd /opt/stacks/cloud && docker compose pull && docker compose up -d" --ask-vault-pass
+	@if ansible cloud_nodes -i inventory/hosts.ini --list-hosts 2>/dev/null | grep -q "hosts (0)"; then \
+		echo "No cloud nodes in inventory, skipping cloud stack."; \
+	else \
+		echo "Updating cloud stack..."; \
+		ansible cloud_nodes -i inventory/hosts.ini -m shell -a "cd /opt/stacks/cloud && docker compose pull && docker compose up -d" --ask-vault-pass; \
+	fi
 	@echo ""
-	@echo "All services updated and restarted"
+	@echo "Done. Containers are recreated only where a newer image was pulled; 'Running' above means that container's image is unchanged."
 
 # --- Authentik SSO Targets ---
 
