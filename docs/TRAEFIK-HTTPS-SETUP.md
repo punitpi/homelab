@@ -46,7 +46,7 @@ ansible cloud-node -i inventory/hosts.ini -m ping --ask-vault-pass
 ssh homelab@rpi-home "docker ps"
 
 # Verify cloud VM can reach RPi via Tailscale
-ssh homelab@cloud-node "ping -c 3 ub-house-green"
+ssh homelab@cloud-node "ping -c 3 merry"
 ```
 
 ---

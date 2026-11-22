@@ -91,14 +91,15 @@ sudo ufw default allow outgoing
 
 ### Service Binding
 
-**Localhost-Only Binding:**
+- **Postgres and Redis** bind to `127.0.0.1` only (`127.0.0.1:5432`, `127.0.0.1:6379`).
+- **Apps and Traefik** bind to `0.0.0.0` so they are reachable over Tailscale and through Traefik. They are not reachable from the internet because the router forwards no ports. Note that ports published by Docker bypass UFW's rules, so these ports are reachable from other devices on the home LAN, not only over Tailscale.
 
 ```yaml
-# All services bind to 127.0.0.1, not 0.0.0.0
+# stacks/apps/compose.yml
 services:
-  freshrss:
+  mealie:
     ports:
-      - '127.0.0.1:8081:80' #  Secure (localhost only)
+      - "0.0.0.0:9925:9000"
 ```
 
 ---
