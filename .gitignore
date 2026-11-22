@@ -129,3 +129,6 @@ service-account.json
 .aws/
 .azure/
 .gcp/
+# === CLAUDE CODE ===
+# Per-user local settings
+.claude/settings.local.json
